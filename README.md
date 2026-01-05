@@ -10,15 +10,19 @@ Store *what something is about* (searchable) alongside *where/what it is* (actio
 # Install dependencies
 uv sync
 
-# Run the server
-uv run mcp run server.py
+# Run the server (HTTP on port 8000)
+uv run python server.py
 ```
+
+The server runs on `http://127.0.0.1:8000/mcp` using the Streamable HTTP transport.
 
 ## Configuration
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `RESEARCH_DB_PATH` | `research.db` | Database file path. Use `:memory:` for temporary storage. |
+| `HOST` | `127.0.0.1` | Server bind address (configure in `server.py`). |
+| `PORT` | `9223` | Server port (configure in `server.py`). |
 
 ## Tools
 

@@ -125,4 +125,8 @@ def research_delete(id: int) -> str:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    import uvicorn
+
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "9223"))
+    uvicorn.run(mcp.streamable_http_app(), host=host, port=port)
