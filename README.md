@@ -11,7 +11,7 @@ Store *what something is about* (searchable) alongside *where/what it is* (actio
 uv sync
 
 # Run the server (HTTP on port 8000)
-uv run python server.py
+uv run server.py
 ```
 
 The server runs on `http://127.0.0.1:8000/mcp` using the Streamable HTTP transport.
