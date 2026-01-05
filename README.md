@@ -16,6 +16,34 @@ uv run server.py
 
 The server runs on `http://127.0.0.1:9223/mcp` using the Streamable HTTP transport.
 
+### Adding to your MCP client
+
+Once the server is running, add it to your MCP client config:
+
+**Claude Desktop** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "research": {
+      "url": "http://127.0.0.1:9223/mcp"
+    }
+  }
+}
+```
+
+**Claude Code** (`.claude/settings.json` or via `claude mcp add`):
+```json
+{
+  "mcpServers": {
+    "research": {
+      "url": "http://127.0.0.1:9223/mcp"
+    }
+  }
+}
+```
+
+Or use the CLI: `claude mcp add research --transport http --url http://127.0.0.1:9223/mcp`
+
 ## Configuration
 
 | Environment Variable | Default | Description |
