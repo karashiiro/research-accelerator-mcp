@@ -10,11 +10,11 @@ Store *what something is about* (searchable) alongside *where/what it is* (actio
 # Install dependencies
 uv sync
 
-# Run the server (HTTP on port 8000)
+# Run the server (HTTP on port 9223)
 uv run server.py
 ```
 
-The server runs on `http://127.0.0.1:8000/mcp` using the Streamable HTTP transport.
+The server runs on `http://127.0.0.1:9223/mcp` using the Streamable HTTP transport.
 
 ## Configuration
 
