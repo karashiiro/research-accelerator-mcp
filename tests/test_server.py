@@ -37,6 +37,56 @@ class TestCreate:
         assert "Vaswani" in search_result
         assert "https://arxiv.org/abs/1706.03762" in search_result
 
+    def test_exact_duplicate_is_deduplicated(self):
+        """Creating the same description+resource twice returns existing ID."""
+        first_result = research_create(
+            description="test dedup description",
+            resource="https://example.com/dedup",
+        )
+        assert "Saved with ID" in first_result
+        first_id = first_result.split()[-1]
+
+        # Try to create exact duplicate
+        second_result = research_create(
+            description="test dedup description",
+            resource="https://example.com/dedup",
+        )
+        assert "Already exists with ID" in second_result
+        second_id = second_result.split()[-1]
+
+        # Should return the same ID
+        assert first_id == second_id
+
+        # Should only have one entry in the database
+        search_result = research_search("dedup")
+        assert search_result.count("->") == 1
+
+    def test_different_description_same_resource_creates_new_entry(self):
+        """Different description for same resource creates a new entry."""
+        research_create(
+            description="first description for resource",
+            resource="https://example.com/same",
+        )
+        result = research_create(
+            description="second description for resource",
+            resource="https://example.com/same",
+        )
+        # Should create a new entry, not dedupe
+        assert "Saved with ID" in result
+
+    def test_same_description_different_resource_creates_new_entry(self):
+        """Same description for different resource creates a new entry."""
+        research_create(
+            description="identical description",
+            resource="https://example.com/first",
+        )
+        result = research_create(
+            description="identical description",
+            resource="https://example.com/second",
+        )
+        # Should create a new entry, not dedupe
+        assert "Saved with ID" in result
+
 
 class TestSearch:
     """Tests for research_search tool."""

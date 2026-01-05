@@ -59,9 +59,19 @@ def research_create(description: str, resource: str) -> str:
         resource: The resource: a URL, tool name, JSON, file path, or any identifier.
 
     Returns:
-        The ID of the saved entry.
+        The ID of the saved entry, or the existing ID if an exact duplicate exists.
     """
     conn = get_db()
+
+    # Check for exact duplicate (same description AND same resource)
+    existing = conn.execute(
+        "SELECT rowid FROM research WHERE description = ? AND resource = ?",
+        (description, resource),
+    ).fetchone()
+
+    if existing:
+        return f"Already exists with ID {existing['rowid']}"
+
     cur = conn.execute(
         "INSERT INTO research (description, resource) VALUES (?, ?)",
         (description, resource),
@@ -122,6 +132,47 @@ def research_delete(id: int) -> str:
     if cur.rowcount > 0:
         return f"Deleted entry {id}."
     return f"No entry found with ID {id}."
+
+
+@mcp.tool()
+def debug_research_query(sql: str) -> str:
+    """Run a read-only SQL query against the research database for debugging.
+
+    The database has an FTS5 virtual table called 'research' with columns:
+    - rowid: Auto-generated integer ID
+    - description: Searchable text describing the resource
+    - resource: The URL, tool name, or identifier (UNINDEXED)
+
+    Args:
+        sql: A SELECT query to run. Only SELECT statements are allowed.
+
+    Returns:
+        Query results as formatted text, or an error message.
+    """
+    # Only allow SELECT queries for safety
+    normalized = sql.strip().upper()
+    if not normalized.startswith("SELECT"):
+        return "Error: Only SELECT queries are allowed for debugging."
+
+    conn = get_db()
+    try:
+        rows = conn.execute(sql).fetchall()
+        if not rows:
+            return "No results."
+        # Format results
+        lines = []
+        for row in rows:
+            if hasattr(row, "keys"):
+                # sqlite3.Row object
+                cols = row.keys()
+                parts = [f"{col}={row[col]!r}" for col in cols]
+                lines.append(" | ".join(parts))
+            else:
+                # Tuple result
+                lines.append(str(row))
+        return "\n".join(lines)
+    except sqlite3.Error as e:
+        return f"SQL Error: {e}"
 
 
 if __name__ == "__main__":
