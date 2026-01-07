@@ -208,3 +208,10 @@ __marimo__/
 
 # Research database
 *.db*
+
+# Eval artifacts
+eval/harness/snapshots/
+eval/harness/results/
+eval/harness/traces/
+eval/harness/.env.local
+eval/harness/.oauth_tokens.json

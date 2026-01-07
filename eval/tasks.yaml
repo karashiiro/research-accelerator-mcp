@@ -1,0 +1,215 @@
+# Evaluation Task Suite
+# Structured task definitions for the eval harness
+# See tasks.md for detailed documentation
+
+tasks:
+  # ===========================================
+  # Task Family 1: Transformer Architecture
+  # ===========================================
+
+  T1.1:
+    family: Transformer
+    type: primary
+    prompt: "Find the seminal papers on attention mechanisms in deep learning, particularly for sequence-to-sequence models and transformers."
+    ground_truth:
+      - paper: "Vaswani et al. 2017"
+        matchers:
+          - "1706.03762"
+          - "Attention Is All You Need"
+          - "Vaswani.*2017"
+      - paper: "Bahdanau et al. 2014"
+        matchers:
+          - "1409.0473"
+          - "Neural Machine Translation by Jointly Learning"
+          - "Bahdanau.*2014"
+      - paper: "Luong et al. 2015"
+        matchers:
+          - "1508.04025"
+          - "Effective Approaches to Attention-based"
+          - "Luong.*2015"
+    success_threshold: 2
+    related_task: T1.2
+    warm_index_entries:
+      - description: "Vaswani et al. 2017 - Attention Is All You Need. Introduces Transformer architecture with self-attention mechanism, multi-head attention, positional encoding. Foundational paper for modern NLP."
+        resource: "https://arxiv.org/abs/1706.03762"
+      - description: "Bahdanau et al. 2014 - Neural Machine Translation by Jointly Learning to Align and Translate. Introduces attention mechanism for sequence-to-sequence models."
+        resource: "https://arxiv.org/abs/1409.0473"
+      - description: "Luong et al. 2015 - Effective Approaches to Attention-based Neural Machine Translation. Compares global vs local attention mechanisms."
+        resource: "https://arxiv.org/abs/1508.04025"
+
+  T1.2:
+    family: Transformer
+    type: related
+    primary_task: T1.1
+    prompt: "Find papers on positional encoding approaches for transformers - how do transformer models encode sequence position information?"
+    ground_truth:
+      - paper: "Vaswani et al. 2017"
+        matchers:
+          - "1706.03762"
+          - "Attention Is All You Need"
+          - "Vaswani.*2017"
+      - paper: "Su et al. 2021 (RoFormer)"
+        matchers:
+          - "2104.09864"
+          - "RoFormer"
+          - "Rotary Position Embedding"
+          - "Su.*2021"
+      - paper: "Press et al. 2021 (ALiBi)"
+        matchers:
+          - "2108.12409"
+          - "ALiBi"
+          - "Train Short.*Test Long"
+          - "Press.*2021"
+    success_threshold: 2
+    # Uses T1.1's warm_index_entries for related-warm condition
+
+  # ===========================================
+  # Task Family 2: Code Generation
+  # ===========================================
+
+  T2.1:
+    family: CodeGeneration
+    type: primary
+    prompt: "Find important papers and resources on using neural networks for code generation and program synthesis."
+    ground_truth:
+      - paper: "Chen et al. 2021 (Codex)"
+        matchers:
+          - "2107.03374"
+          - "Codex"
+          - "Evaluating Large Language Models Trained on Code"
+          - "Chen.*2021.*code"
+      - paper: "Li et al. 2022 (AlphaCode)"
+        matchers:
+          - "2203.07814"
+          - "AlphaCode"
+          - "Competition-Level Code Generation"
+          - "Li.*2022.*code"
+      - paper: "Austin et al. 2021"
+        matchers:
+          - "2108.07732"
+          - "Program Synthesis with Large Language Models"
+          - "Austin.*2021"
+    success_threshold: 2
+    related_task: T2.2
+    warm_index_entries:
+      - description: "Chen et al. 2021 - Codex: Evaluating Large Language Models Trained on Code. Introduces Codex model, HumanEval benchmark, code generation from docstrings."
+        resource: "https://arxiv.org/abs/2107.03374"
+      - description: "Li et al. 2022 - AlphaCode: Competition-Level Code Generation. Achieves competitive programming performance, large-scale sampling and filtering approach."
+        resource: "https://arxiv.org/abs/2203.07814"
+      - description: "Austin et al. 2021 - Program Synthesis with Large Language Models. Evaluates LLMs on program synthesis benchmarks, MBPP dataset."
+        resource: "https://arxiv.org/abs/2108.07732"
+
+  T2.2:
+    family: CodeGeneration
+    type: related
+    primary_task: T2.1
+    prompt: "Find benchmarks and evaluation datasets used for measuring code generation capabilities of language models."
+    ground_truth:
+      - paper: "Chen et al. 2021 (HumanEval)"
+        matchers:
+          - "2107.03374"
+          - "HumanEval"
+          - "Codex"
+          - "Chen.*2021"
+      - paper: "Hendrycks et al. 2021 (APPS)"
+        matchers:
+          - "2105.09938"
+          - "APPS"
+          - "Measuring Coding Challenge Competence"
+          - "Hendrycks.*2021"
+      - paper: "Lu et al. 2021 (CodeXGLUE)"
+        matchers:
+          - "2102.04664"
+          - "CodeXGLUE"
+          - "Lu.*2021.*code"
+    success_threshold: 2
+    # Uses T2.1's warm_index_entries for related-warm condition
+
+  # ===========================================
+  # Task Family 3: Retrieval-Augmented Generation
+  # ===========================================
+
+  T3.1:
+    family: RAG
+    type: primary
+    prompt: "Find papers on retrieval-augmented generation (RAG) - combining retrieval systems with language models for knowledge-grounded generation."
+    ground_truth:
+      - paper: "Lewis et al. 2020 (RAG)"
+        matchers:
+          - "2005.11401"
+          - "Retrieval-Augmented Generation for Knowledge-Intensive"
+          - "Lewis.*2020.*retrieval"
+      - paper: "Borgeaud et al. 2022 (RETRO)"
+        matchers:
+          - "2112.04426"
+          - "RETRO"
+          - "Retrieving from Trillions of Tokens"
+          - "Borgeaud.*2022"
+      - paper: "Izacard & Grave 2020"
+        matchers:
+          - "2007.01282"
+          - "Leveraging Passage Retrieval with Generative Models"
+          - "Izacard.*2020"
+    success_threshold: 2
+    related_task: T3.2
+    warm_index_entries:
+      - description: "Lewis et al. 2020 - RAG: Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. Combines retrieval with generation, uses dense passage retrieval with seq2seq model."
+        resource: "https://arxiv.org/abs/2005.11401"
+      - description: "Borgeaud et al. 2022 - RETRO: Improving Language Models by Retrieving from Trillions of Tokens. Retrieval-enhanced transformer, nearest neighbor retrieval at scale."
+        resource: "https://arxiv.org/abs/2112.04426"
+      - description: "Izacard & Grave 2020 - Leveraging Passage Retrieval with Generative Models for Open Domain Question Answering. Fusion-in-Decoder approach, retrieval for QA."
+        resource: "https://arxiv.org/abs/2007.01282"
+
+  T3.2:
+    family: RAG
+    type: related
+    primary_task: T3.1
+    prompt: "Find resources on vector databases and approximate nearest neighbor search for building RAG systems."
+    ground_truth:
+      - paper: "FAISS"
+        matchers:
+          - "FAISS"
+          - "Facebook AI Similarity Search"
+          - "faiss"
+      - paper: "Johnson et al. 2017"
+        matchers:
+          - "1702.08734"
+          - "Billion-scale similarity search"
+          - "Johnson.*2017.*similarity"
+      - paper: "Any major vector DB"
+        matchers:
+          - "Pinecone"
+          - "Weaviate"
+          - "Milvus"
+          - "Qdrant"
+          - "Chroma"
+    success_threshold: 2
+    # Uses T3.1's warm_index_entries for related-warm condition
+
+  # ===========================================
+  # Unrelated Control Task
+  # ===========================================
+
+  T0:
+    family: Unrelated
+    type: unrelated_control
+    prompt: "Find key research papers on cephalopod cognition and problem-solving abilities - how do octopuses, cuttlefish, and squid demonstrate intelligence?"
+    ground_truth:
+      - paper: "Godfrey-Smith 2016"
+        matchers:
+          - "Other Minds"
+          - "Octopus.*Consciousness"
+          - "Godfrey-Smith.*2016"
+      - paper: "Hochner 2012"
+        matchers:
+          - "Embodied View of Octopus Neurobiology"
+          - "10.1016/j.cub.2012.09.001"
+          - "Hochner.*2012"
+      - paper: "Schnell et al. 2021"
+        matchers:
+          - "Cuttlefish.*self-control"
+          - "delay of gratification"
+          - "10.1098/rspb.2020.3161"
+          - "Schnell.*2021"
+    success_threshold: 2
+    # Used across all task families for unrelated-warm condition

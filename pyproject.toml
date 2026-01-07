@@ -15,6 +15,14 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.14.0",
 ]
+eval = [
+    "strands-agents>=1.21.0",
+    "strands-agents-tools>=0.1.0",
+    "httpx>=0.27.0",
+    "mcp>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
+]
 
 [build-system]
 requires = ["hatchling"]
