@@ -5,29 +5,29 @@ Coordinates running all experimental conditions across tasks,
 collecting metrics, and saving results.
 """
 
+import asyncio
 import csv
 import json
 import logging
 import os
 import subprocess
 import sys
+import threading
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
 from strands.tools.mcp import MCPClient
+from strands_tools.tavily import tavily_search
 
 from .config import Config
 from .db import DatabaseManager
-from .metrics import (
-    RunMetrics,
-    TaskMatcher,
-    count_tool_calls,
-    score_description_quality,
-)
+from .metrics import RunMetrics, TaskMatcher, score_description_quality
 from .model import AnthropicOAuthModel
 from .oauth import OAuthManager
 from .tasks import Task, get_primary_tasks, get_related_task, get_tasks, get_unrelated_task
@@ -83,6 +83,25 @@ When given a research task:
 
 Your goal is to help the user build a comprehensive understanding of their research topic with actionable, well-sourced information."""
 
+# Server startup configuration
+SERVER_STARTUP_TIMEOUT = 10.0  # seconds
+SERVER_POLL_INTERVAL = 0.2  # seconds
+
+# Agent execution timeout
+AGENT_TIMEOUT = 600.0  # 10 minutes
+
+
+def _drain_pipe(pipe, output_list: list, name: str) -> None:
+    """Drain a subprocess pipe in a background thread to prevent deadlock."""
+    try:
+        for line in iter(pipe.readline, b""):
+            output_list.append(line)
+            logger.debug(f"[{name}] {line.decode().rstrip()}")
+    except Exception as e:
+        logger.debug(f"Pipe drain error ({name}): {e}")
+    finally:
+        pipe.close()
+
 
 class EvalRunner:
     """
@@ -102,6 +121,10 @@ class EvalRunner:
         self.db = DatabaseManager(config.db_path, config.snapshots_dir)
         self.results: list[RunMetrics] = []
         self._mcp_process: subprocess.Popen | None = None
+        self._stdout_thread: threading.Thread | None = None
+        self._stderr_thread: threading.Thread | None = None
+        self._stdout_lines: list[bytes] = []
+        self._stderr_lines: list[bytes] = []
 
         # Ensure output directories exist
         config.results_dir.mkdir(parents=True, exist_ok=True)
@@ -122,6 +145,11 @@ class EvalRunner:
         env["HOST"] = self.config.mcp_host
 
         logger.debug(f"Starting MCP server on port {self.config.mcp_port}")
+
+        # Clear output buffers
+        self._stdout_lines = []
+        self._stderr_lines = []
+
         self._mcp_process = subprocess.Popen(
             [sys.executable, str(server_path)],
             env=env,
@@ -129,15 +157,50 @@ class EvalRunner:
             stderr=subprocess.PIPE,
         )
 
-        # Wait for server to be ready
-        time.sleep(1.0)
+        # Start threads to drain stdout/stderr (prevents buffer deadlock)
+        self._stdout_thread = threading.Thread(
+            target=_drain_pipe,
+            args=(self._mcp_process.stdout, self._stdout_lines, "server-stdout"),
+            daemon=True,
+        )
+        self._stderr_thread = threading.Thread(
+            target=_drain_pipe,
+            args=(self._mcp_process.stderr, self._stderr_lines, "server-stderr"),
+            daemon=True,
+        )
+        self._stdout_thread.start()
+        self._stderr_thread.start()
 
-        if self._mcp_process.poll() is not None:
-            # Server exited immediately - something went wrong
-            stderr = self._mcp_process.stderr.read().decode() if self._mcp_process.stderr else ""
-            raise RuntimeError(f"MCP server failed to start: {stderr}")
+        # Poll for server readiness instead of fixed sleep
+        if not self._wait_for_server_ready():
+            stderr_output = b"".join(self._stderr_lines).decode()
+            raise RuntimeError(f"MCP server failed to start: {stderr_output}")
 
         logger.info(f"MCP server started on {self.config.mcp_url}")
+
+    def _wait_for_server_ready(self) -> bool:
+        """Poll server until it responds or timeout."""
+        start_time = time.time()
+
+        while time.time() - start_time < SERVER_STARTUP_TIMEOUT:
+            # Check if process exited
+            if self._mcp_process and self._mcp_process.poll() is not None:
+                return False
+
+            # Try to connect
+            try:
+                with httpx.Client(timeout=1.0) as client:
+                    # Just check if the server accepts connections
+                    # The /mcp endpoint may not respond to GET, but connection success is enough
+                    response = client.get(f"http://{self.config.mcp_host}:{self.config.mcp_port}/")
+                    # Any response (even 404) means server is up
+                    return True
+            except (httpx.ConnectError, httpx.ReadTimeout):
+                pass
+
+            time.sleep(SERVER_POLL_INTERVAL)
+
+        return False
 
     def _stop_mcp_server(self) -> None:
         """Stop the eval's MCP server subprocess."""
@@ -152,7 +215,16 @@ class EvalRunner:
             self._mcp_process.kill()
             self._mcp_process.wait()
 
+        # Wait for drain threads to finish
+        if self._stdout_thread and self._stdout_thread.is_alive():
+            self._stdout_thread.join(timeout=1.0)
+        if self._stderr_thread and self._stderr_thread.is_alive():
+            self._stderr_thread.join(timeout=1.0)
+
         self._mcp_process = None
+        self._stdout_thread = None
+        self._stderr_thread = None
+
         # Small delay to ensure file handles are released (Windows)
         time.sleep(0.5)
         logger.info("MCP server stopped")
@@ -287,10 +359,6 @@ class EvalRunner:
                 model_id=self.config.model_id,
             )
 
-            # Get web search tools (tavily)
-            # For control, we just use web search
-            from strands_tools.tavily import tavily_search
-
             agent = Agent(
                 model=model,
                 tools=[tavily_search],
@@ -313,7 +381,7 @@ class EvalRunner:
             self._save_trace(metrics, result)
 
         except Exception as e:
-            logger.error(f"Control run failed: {e}")
+            logger.error(f"Control run failed: {e}\n{traceback.format_exc()}")
             metrics.success = False
 
         return metrics
@@ -361,7 +429,7 @@ class EvalRunner:
             self._save_trace(metrics, result)
 
         except Exception as e:
-            logger.error(f"Cold run failed: {e}")
+            logger.error(f"Cold run failed: {e}\n{traceback.format_exc()}")
             metrics.success = False
 
         return metrics, snapshot_path
@@ -402,7 +470,7 @@ class EvalRunner:
             self._save_trace(metrics, result)
 
         except Exception as e:
-            logger.error(f"Ideal-warm run failed: {e}")
+            logger.error(f"Ideal-warm run failed: {e}\n{traceback.format_exc()}")
             metrics.success = False
 
         return metrics
@@ -444,7 +512,7 @@ class EvalRunner:
             self._save_trace(metrics, result)
 
         except Exception as e:
-            logger.error(f"Realistic-warm run failed: {e}")
+            logger.error(f"Realistic-warm run failed: {e}\n{traceback.format_exc()}")
             metrics.success = False
 
         return metrics
@@ -490,7 +558,7 @@ class EvalRunner:
             self._save_trace(metrics, result)
 
         except Exception as e:
-            logger.error(f"Related-warm-ideal run failed: {e}")
+            logger.error(f"Related-warm-ideal run failed: {e}\n{traceback.format_exc()}")
             metrics.success = False
 
         return metrics
@@ -532,7 +600,7 @@ class EvalRunner:
             self._save_trace(metrics, result)
 
         except Exception as e:
-            logger.error(f"Related-warm-realistic run failed: {e}")
+            logger.error(f"Related-warm-realistic run failed: {e}\n{traceback.format_exc()}")
             metrics.success = False
 
         return metrics
@@ -574,7 +642,7 @@ class EvalRunner:
             self._save_trace(metrics, result)
 
         except Exception as e:
-            logger.error(f"Unrelated-warm run failed: {e}")
+            logger.error(f"Unrelated-warm run failed: {e}\n{traceback.format_exc()}")
             metrics.success = False
 
         return metrics
@@ -597,9 +665,6 @@ class EvalRunner:
 
         mcp_client = MCPClient(create_mcp_transport)
 
-        # Get web search tools
-        from strands_tools.tavily import tavily_search
-
         with mcp_client:
             mcp_tools = mcp_client.list_tools_sync()
 
@@ -617,17 +682,21 @@ class EvalRunner:
         prompt: str,
         metrics: RunMetrics,
     ) -> dict[str, Any]:
-        """Execute agent and collect metrics."""
+        """Execute agent and collect metrics with timeout."""
         result: dict[str, Any] = {
             "output": "",
             "messages": [],
-            "tool_calls": [],
+            "tool_calls": {},
             "error": None,
         }
 
         try:
-            # Run the agent
-            response = agent(prompt)
+            # Run the synchronous agent call in a thread pool with timeout
+            # This prevents blocking the async event loop
+            response = await asyncio.wait_for(
+                asyncio.to_thread(agent, prompt),
+                timeout=AGENT_TIMEOUT,
+            )
 
             # Extract output
             if hasattr(response, "message"):
@@ -635,35 +704,37 @@ class EvalRunner:
             else:
                 result["output"] = str(response)
 
-            # Extract metrics from response
+            # Extract metrics from response (combined check to avoid duplication)
             if hasattr(response, "metrics") and response.metrics:
                 resp_metrics = response.metrics
-                # Strands stores usage in accumulated_usage dict with camelCase keys
+
+                # Token usage
                 usage = getattr(resp_metrics, "accumulated_usage", {})
                 metrics.input_tokens = usage.get("inputTokens", 0)
                 metrics.output_tokens = usage.get("outputTokens", 0)
 
-            # Extract tool calls from metrics.tool_metrics
-            if hasattr(response, "metrics") and response.metrics:
-                tool_metrics = getattr(response.metrics, "tool_metrics", {})
-                # tool_metrics is dict of {tool_name: ToolMetrics}
-                tool_call_summary = {}
-                for tool_name, tm in tool_metrics.items():
-                    tool_call_summary[tool_name] = getattr(tm, "call_count", 0)
+                # Tool call counts
+                tool_metrics = getattr(resp_metrics, "tool_metrics", {})
+                tool_call_summary = {
+                    name: getattr(tm, "call_count", 0)
+                    for name, tm in tool_metrics.items()
+                }
                 result["tool_calls"] = tool_call_summary
 
-                # Count specific tools
                 metrics.research_search_calls = tool_call_summary.get("research_search", 0)
                 metrics.research_create_calls = tool_call_summary.get("research_create", 0)
                 metrics.web_search_calls = tool_call_summary.get("tavily_search", 0)
 
-            # Extract final message for trace (full conversation history not available)
+            # Extract final message for trace
             if hasattr(response, "message") and response.message:
                 result["messages"] = [response.message]
 
+        except asyncio.TimeoutError:
+            result["error"] = f"Agent execution timed out after {AGENT_TIMEOUT}s"
+            logger.error(result["error"])
         except Exception as e:
             result["error"] = str(e)
-            logger.error(f"Agent execution failed: {e}")
+            logger.error(f"Agent execution failed: {e}\n{traceback.format_exc()}")
 
         return result
 
@@ -685,7 +756,7 @@ class EvalRunner:
                 "resources_found": metrics.resources_found,
             },
             "messages": result.get("messages", []),
-            "tool_calls": result.get("tool_calls", []),
+            "tool_calls": result.get("tool_calls", {}),
             "output": result.get("output", ""),
             "error": result.get("error"),
         }

@@ -10,14 +10,20 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
+import os
 import secrets
+import stat
 import time
 import webbrowser
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlencode
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # OAuth Configuration (from opencode-anthropic-auth)
 AUTH_URL = "https://claude.ai/oauth/authorize"
@@ -61,8 +67,8 @@ def generate_code_verifier() -> str:
     return _base64url_encode(random_bytes)
 
 
-async def generate_code_challenge(verifier: str) -> str:
-    """Generate S256 code challenge from verifier."""
+def generate_code_challenge(verifier: str) -> str:
+    """Generate S256 code challenge from verifier (synchronous)."""
     digest = hashlib.sha256(verifier.encode()).digest()
     return _base64url_encode(digest)
 
@@ -109,7 +115,7 @@ class OAuthManager:
             expires=0,  # Force immediate refresh
         )
 
-    async def start_auth_flow(self) -> tuple[str, str]:
+    def start_auth_flow(self) -> tuple[str, str]:
         """
         Generate OAuth authorization URL for user to open in browser.
 
@@ -117,7 +123,7 @@ class OAuthManager:
             Tuple of (auth_url, verifier) - verifier needed for code exchange
         """
         verifier = generate_code_verifier()
-        challenge = await generate_code_challenge(verifier)
+        challenge = generate_code_challenge(verifier)
 
         self._current_verifier = verifier
 
@@ -132,7 +138,8 @@ class OAuthManager:
             "state": verifier,
         }
 
-        url = f"{AUTH_URL}?" + "&".join(f"{k}={v}" for k, v in params.items())
+        # Use proper URL encoding for query parameters
+        url = f"{AUTH_URL}?{urlencode(params)}"
         return url, verifier
 
     async def exchange_code(self, code: str) -> bool:
@@ -169,7 +176,7 @@ class OAuthManager:
                 )
 
                 if response.status_code != 200:
-                    print(f"Token exchange failed: {response.status_code} - {response.text}")
+                    logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
                     return False
 
                 data = response.json()
@@ -183,7 +190,7 @@ class OAuthManager:
                 return True
 
             except Exception as e:
-                print(f"Token exchange error: {e}")
+                logger.error(f"Token exchange error: {e}")
                 return False
 
     async def ensure_valid_token(self) -> str:
@@ -259,9 +266,23 @@ class OAuthManager:
 
 
 def save_tokens(tokens: OAuthTokens, path: Path = DEFAULT_TOKEN_FILE) -> None:
-    """Save tokens to file for reuse across runs."""
-    with open(path, "w") as f:
+    """Save tokens to file for reuse across runs with restricted permissions."""
+    # Write to temp file first, then rename (atomic on most systems)
+    temp_path = path.with_suffix(".tmp")
+
+    with open(temp_path, "w") as f:
         json.dump(tokens.to_dict(), f, indent=2)
+
+    # Set restrictive permissions (owner read/write only) - works on Unix
+    try:
+        os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+    except OSError:
+        # On Windows, this might not work the same way
+        pass
+
+    # Atomic rename
+    temp_path.replace(path)
+    logger.debug(f"Tokens saved to {path}")
 
 
 def load_tokens(path: Path = DEFAULT_TOKEN_FILE) -> OAuthTokens | None:
@@ -277,8 +298,8 @@ def load_tokens(path: Path = DEFAULT_TOKEN_FILE) -> OAuthTokens | None:
         # Check if refresh token is likely still valid
         # (we'll try to refresh even if access token expired)
         return tokens
-    except (json.JSONDecodeError, KeyError, TypeError):
-        # Invalid file, ignore it
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        logger.warning(f"Invalid token file {path}: {e}")
         return None
 
 
@@ -305,12 +326,14 @@ async def get_or_create_oauth(
     if not force_interactive:
         tokens = load_tokens(token_file)
         if tokens:
+            logger.info("Found saved OAuth tokens, attempting to use them...")
             print("Found saved OAuth tokens, attempting to use them...")
             manager.load_tokens(tokens)
 
             try:
                 # Try to get a valid token (will refresh if needed)
                 await manager.ensure_valid_token()
+                logger.info("Successfully authenticated with saved tokens!")
                 print("Successfully authenticated with saved tokens!\n")
 
                 # Save refreshed tokens
@@ -319,6 +342,7 @@ async def get_or_create_oauth(
 
                 return manager
             except Exception as e:
+                logger.warning(f"Saved tokens invalid or expired: {e}")
                 print(f"Saved tokens invalid or expired: {e}")
                 print("Falling back to interactive login...\n")
                 manager.clear()
@@ -329,6 +353,7 @@ async def get_or_create_oauth(
     # Save tokens for next time
     if manager.get_tokens():
         save_tokens(manager.get_tokens(), token_file)
+        logger.info(f"Tokens saved to {token_file} for future runs.")
         print(f"Tokens saved to {token_file} for future runs.\n")
 
     # Set up callback to save on refresh
@@ -346,12 +371,13 @@ async def interactive_login() -> OAuthManager:
     Interactive OAuth login flow for CLI.
 
     Opens browser for authentication, prompts user to paste the code.
+    Uses asyncio-safe input method.
     """
     manager = OAuthManager()
 
     print("\n=== Claude OAuth Login ===\n")
 
-    auth_url, _verifier = await manager.start_auth_flow()
+    auth_url, _verifier = manager.start_auth_flow()
 
     print("Opening browser for authentication...")
     print(f"\nIf browser doesn't open, visit:\n{auth_url}\n")
@@ -361,7 +387,9 @@ async def interactive_login() -> OAuthManager:
     print("After logging in, you'll be redirected to a page with an authorization code.")
     print("Copy the FULL code (including any # and text after it).\n")
 
-    code = input("Paste authorization code here: ").strip()
+    # Use asyncio-safe input to avoid blocking the event loop
+    code = await asyncio.to_thread(input, "Paste authorization code here: ")
+    code = code.strip()
 
     if not code:
         raise RuntimeError("No authorization code provided")
@@ -371,5 +399,6 @@ async def interactive_login() -> OAuthManager:
     if not success:
         raise RuntimeError("Failed to exchange authorization code for tokens")
 
+    logger.info("Authentication successful!")
     print("\nAuthentication successful!\n")
     return manager

@@ -82,7 +82,8 @@ class RunMetrics:
             "research_search_calls": str(self.research_search_calls),
             "research_create_calls": str(self.research_create_calls),
             "web_search_calls": str(self.web_search_calls),
-            "resources_found": ",".join(self.resources_found),
+            # Use semicolon separator to avoid conflicts with CSV comma delimiter
+            "resources_found": ";".join(self.resources_found),
             "success": str(self.success).lower(),
             "description_quality_avg": (
                 f"{self.description_quality_avg:.1f}"
@@ -219,32 +220,3 @@ def score_description_quality(description: str) -> int:
     return min(score, 5)  # Cap at 5
 
 
-def count_tool_calls(
-    messages: list[dict],
-    tool_calls: list[dict],
-) -> tuple[int, int, int]:
-    """
-    Count different types of tool calls from agent execution.
-
-    Args:
-        messages: List of conversation messages.
-        tool_calls: List of tool call records.
-
-    Returns:
-        Tuple of (research_search_calls, research_create_calls, web_search_calls)
-    """
-    research_search = 0
-    research_create = 0
-    web_search = 0
-
-    for call in tool_calls:
-        name = call.get("name", "").lower()
-
-        if "research_search" in name:
-            research_search += 1
-        elif "research_create" in name:
-            research_create += 1
-        elif "tavily" in name or "web_search" in name or "search" in name:
-            web_search += 1
-
-    return research_search, research_create, web_search

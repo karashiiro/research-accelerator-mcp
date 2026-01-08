@@ -4,11 +4,24 @@ Task definitions loader.
 Loads structured task definitions from eval/tasks.yaml.
 """
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 import yaml
+
+logger = logging.getLogger(__name__)
+
+
+class TaskLoadError(Exception):
+    """Exception raised when task loading fails."""
+
+    pass
+
+
+# Required fields for each task in the YAML
+REQUIRED_TASK_FIELDS = {"family", "type", "prompt", "ground_truth", "success_threshold"}
 
 TaskType = Literal["primary", "related", "unrelated_control"]
 
@@ -51,6 +64,47 @@ class Task:
         ]
 
 
+def _validate_task(task_id: str, task_data: dict) -> list[str]:
+    """
+    Validate a task definition has required fields.
+
+    Returns:
+        List of validation error messages (empty if valid).
+    """
+    errors = []
+
+    # Check required top-level fields
+    missing = REQUIRED_TASK_FIELDS - set(task_data.keys())
+    if missing:
+        errors.append(f"Task {task_id}: missing required fields: {missing}")
+
+    # Validate ground_truth structure
+    ground_truth = task_data.get("ground_truth", [])
+    if not isinstance(ground_truth, list):
+        errors.append(f"Task {task_id}: ground_truth must be a list")
+    else:
+        for i, gt in enumerate(ground_truth):
+            if not isinstance(gt, dict):
+                errors.append(f"Task {task_id}: ground_truth[{i}] must be a dict")
+            elif "paper" not in gt or "matchers" not in gt:
+                errors.append(f"Task {task_id}: ground_truth[{i}] missing 'paper' or 'matchers'")
+            elif not isinstance(gt.get("matchers"), list):
+                errors.append(f"Task {task_id}: ground_truth[{i}].matchers must be a list")
+
+    # Validate warm_index_entries structure if present
+    warm_entries = task_data.get("warm_index_entries", [])
+    if not isinstance(warm_entries, list):
+        errors.append(f"Task {task_id}: warm_index_entries must be a list")
+    else:
+        for i, entry in enumerate(warm_entries):
+            if not isinstance(entry, dict):
+                errors.append(f"Task {task_id}: warm_index_entries[{i}] must be a dict")
+            elif "description" not in entry or "resource" not in entry:
+                errors.append(f"Task {task_id}: warm_index_entries[{i}] missing 'description' or 'resource'")
+
+    return errors
+
+
 def load_tasks(yaml_path: Path | None = None) -> dict[str, Task]:
     """
     Load task definitions from YAML file.
@@ -60,16 +114,48 @@ def load_tasks(yaml_path: Path | None = None) -> dict[str, Task]:
 
     Returns:
         Dictionary mapping task_id to Task objects.
+
+    Raises:
+        TaskLoadError: If file not found, invalid YAML, or validation fails.
     """
     if yaml_path is None:
         yaml_path = Path(__file__).parent.parent / "tasks.yaml"
 
-    with open(yaml_path) as f:
-        data = yaml.safe_load(f)
+    # Check if file exists
+    if not yaml_path.exists():
+        raise TaskLoadError(f"Tasks file not found: {yaml_path}")
 
+    # Parse YAML with error handling
+    try:
+        with open(yaml_path) as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise TaskLoadError(f"Invalid YAML in {yaml_path}: {e}") from e
+
+    # Check for tasks key
+    if not data or "tasks" not in data:
+        raise TaskLoadError(f"No 'tasks' key found in {yaml_path}")
+
+    tasks_data = data["tasks"]
+    if not isinstance(tasks_data, dict):
+        raise TaskLoadError(f"'tasks' must be a dictionary in {yaml_path}")
+
+    # Validate all tasks first, collect errors
+    all_errors: list[str] = []
+    for task_id, task_data in tasks_data.items():
+        if not isinstance(task_data, dict):
+            all_errors.append(f"Task {task_id}: must be a dictionary")
+            continue
+        all_errors.extend(_validate_task(task_id, task_data))
+
+    if all_errors:
+        error_msg = "Task validation failed:\n  " + "\n  ".join(all_errors)
+        raise TaskLoadError(error_msg)
+
+    # Parse validated tasks
     tasks: dict[str, Task] = {}
 
-    for task_id, task_data in data.get("tasks", {}).items():
+    for task_id, task_data in tasks_data.items():
         # Parse ground truth
         ground_truth = [
             GroundTruthItem(
@@ -90,16 +176,17 @@ def load_tasks(yaml_path: Path | None = None) -> dict[str, Task]:
 
         tasks[task_id] = Task(
             task_id=task_id,
-            family=task_data.get("family", ""),
-            task_type=task_data.get("type", "primary"),
-            prompt=task_data.get("prompt", ""),
+            family=task_data["family"],
+            task_type=task_data["type"],
+            prompt=task_data["prompt"],
             ground_truth=ground_truth,
-            success_threshold=task_data.get("success_threshold", 2),
+            success_threshold=task_data["success_threshold"],
             warm_index_entries=warm_entries,
             related_task=task_data.get("related_task"),
             primary_task=task_data.get("primary_task"),
         )
 
+    logger.debug(f"Loaded {len(tasks)} tasks from {yaml_path}")
     return tasks
 
 

@@ -4,8 +4,11 @@ Custom Strands model provider using OAuth authentication.
 Calls Anthropic API directly with OAuth Bearer tokens instead of API keys.
 """
 
+import asyncio
 import json
 import logging
+import platform
+import sys
 from typing import Any, AsyncIterator
 
 import httpx
@@ -38,6 +41,30 @@ CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.0 (external, cli)"
 # The OAuth validation only checks the first block, so we split on this
 CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
 
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 1.0  # seconds
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _get_platform_info() -> dict[str, str]:
+    """Get platform-specific information for headers."""
+    system = platform.system()
+    machine = platform.machine().lower()
+
+    # Map platform to expected values
+    os_name = {"Windows": "Windows", "Darwin": "macOS", "Linux": "Linux"}.get(system, system)
+    arch = {"x86_64": "x64", "amd64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(machine, machine)
+
+    # Get Python/Node version (we pretend to be Node for Claude Code compatibility)
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+    return {
+        "os": os_name,
+        "arch": arch,
+        "runtime_version": f"v22.14.0",  # Pretend to be Node for Claude Code
+    }
+
 
 class AnthropicOAuthModel(Model):
     """
@@ -60,6 +87,7 @@ class AnthropicOAuthModel(Model):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        self._platform_info = _get_platform_info()
 
     def update_config(self, **kwargs: Any) -> None:
         """Update model configuration."""
@@ -97,22 +125,15 @@ class AnthropicOAuthModel(Model):
         Stream responses from Anthropic API using OAuth.
 
         Converts Anthropic SSE events to Strands StreamEvent format.
+        Includes automatic retry with exponential backoff for transient errors.
         """
-        # Debug: Log incoming messages and system prompt
-        logger.info(f"stream() called with {len(messages)} messages")
-        logger.info(f"  system_prompt present: {system_prompt is not None}")
-        logger.info(f"  kwargs: {kwargs}")
-        if "system_prompt_content" in kwargs:
-            logger.info(f"  system_prompt_content: {kwargs['system_prompt_content']}")
+        # Debug logging (only at DEBUG level to avoid spam)
+        logger.debug(f"stream() called with {len(messages)} messages")
+        logger.debug(f"  system_prompt present: {system_prompt is not None}")
         if system_prompt:
-            logger.info(f"  system_prompt starts with: {system_prompt[:100]}...")
+            logger.debug(f"  system_prompt starts with: {system_prompt[:100]}...")
         else:
             logger.warning("  NO SYSTEM PROMPT! This will cause OAuth auth error!")
-        for i, msg in enumerate(messages):
-            logger.debug(f"  Message {i}: role={msg.get('role')}, content={msg.get('content')}")
-
-        # Get valid access token (may trigger refresh)
-        access_token = await self.oauth.ensure_valid_token()
 
         # Build request payload
         payload: dict[str, Any] = {
@@ -133,12 +154,43 @@ class AnthropicOAuthModel(Model):
         if tool_specs:
             payload["tools"] = self._convert_tools(tool_specs)
 
-        # Debug: Log payload (truncate system prompt for brevity)
-        debug_payload = payload.copy()
-        if "system" in debug_payload:
-            # System is now a list of content blocks
-            debug_payload["system"] = f"[{len(debug_payload['system'])} content blocks]"
-        logger.debug(f"Request payload: {debug_payload}")
+        logger.debug(f"Request payload: model={payload['model']}, messages={len(payload['messages'])}")
+
+        # Retry loop for transient errors
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                async for event in self._stream_with_client(payload):
+                    yield event
+                return  # Success - exit retry loop
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in RETRYABLE_STATUS_CODES:
+                    last_error = e
+                    wait_time = RETRY_BACKOFF_BASE * (2 ** attempt)
+                    logger.warning(
+                        f"Retryable error {e.response.status_code}, "
+                        f"attempt {attempt + 1}/{MAX_RETRIES}, waiting {wait_time}s"
+                    )
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise
+            except (httpx.ConnectError, httpx.ReadTimeout) as e:
+                last_error = e
+                wait_time = RETRY_BACKOFF_BASE * (2 ** attempt)
+                logger.warning(
+                    f"Network error: {e}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {wait_time}s"
+                )
+                await asyncio.sleep(wait_time)
+
+        # All retries exhausted
+        raise RuntimeError(f"All {MAX_RETRIES} retry attempts failed") from last_error
+
+    async def _stream_with_client(
+        self, payload: dict[str, Any]
+    ) -> AsyncIterator[StreamEvent]:
+        """Execute streaming request with a fresh client."""
+        # Get valid access token (may trigger refresh)
+        access_token = await self.oauth.ensure_valid_token()
 
         # Build headers - must identify as Claude Code client for OAuth tokens
         headers = {
@@ -157,14 +209,14 @@ class AnthropicOAuthModel(Model):
             "User-Agent": CLAUDE_CODE_USER_AGENT,
             "x-app": "cli",
             "x-service-name": "claude-code",
-            # Stainless SDK headers (must match JS SDK that Claude Code uses)
-            "x-stainless-arch": "x64",
+            # Stainless SDK headers (platform-aware)
+            "x-stainless-arch": self._platform_info["arch"],
             "x-stainless-lang": "js",
-            "x-stainless-os": "Windows",
+            "x-stainless-os": self._platform_info["os"],
             "x-stainless-package-version": "0.70.0",
             "x-stainless-retry-count": "0",
             "x-stainless-runtime": "node",
-            "x-stainless-runtime-version": "v22.14.0",
+            "x-stainless-runtime-version": self._platform_info["runtime_version"],
             "x-stainless-helper-method": "stream",
             "x-stainless-timeout": "600",
         }
@@ -174,7 +226,10 @@ class AnthropicOAuthModel(Model):
         output_tokens = 0
         content_block_started = False
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        # Use a timeout that allows for long responses but catches stalls
+        timeout = httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream(
                 "POST",
                 f"{ANTHROPIC_API}{MESSAGES_ENDPOINT}",
@@ -184,25 +239,34 @@ class AnthropicOAuthModel(Model):
             ) as response:
                 if response.status_code != 200:
                     error_body = await response.aread()
-                    raise RuntimeError(
-                        f"Anthropic API error {response.status_code}: {error_body.decode()}"
+                    error_msg = error_body.decode()
+                    logger.error(f"API error {response.status_code}: {error_msg}")
+                    raise httpx.HTTPStatusError(
+                        f"Anthropic API error {response.status_code}: {error_msg}",
+                        request=response.request,
+                        response=response,
                     )
 
                 # Process SSE stream
                 async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
+                    if not line or not line.startswith("data: "):
                         continue
 
                     data = line[6:]  # Strip "data: " prefix
-                    if data == "[DONE]":
+
+                    # Anthropic uses empty data or specific events to signal end
+                    if not data or data == "[DONE]":
+                        logger.debug("Stream ended")
                         break
 
                     try:
                         event = json.loads(data)
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse SSE event: {e}, data: {data[:100]}")
                         continue
 
                     event_type = event.get("type")
+                    logger.debug(f"SSE event: {event_type}")
 
                     if event_type == "message_start":
                         # Yield message start
@@ -269,8 +333,20 @@ class AnthropicOAuthModel(Model):
                         yield {"messageStop": {"stopReason": strands_stop_reason}}
 
                     elif event_type == "message_stop":
-                        # Final message stop - yield metadata
+                        # Final message stop - stream is complete
+                        logger.debug("Received message_stop event")
+
+                    elif event_type == "error":
+                        # API error event
+                        error = event.get("error", {})
+                        raise RuntimeError(f"API error: {error.get('message', 'Unknown error')}")
+
+                    elif event_type == "ping":
+                        # Keepalive ping, ignore
                         pass
+
+                    else:
+                        logger.debug(f"Unhandled event type: {event_type}")
 
         # Yield final metadata with token counts
         yield {
@@ -290,72 +366,93 @@ class AnthropicOAuthModel(Model):
         for i, msg in enumerate(messages):
             role = msg.get("role", "user")
             content = msg.get("content", [])
-            logger.debug(f"Converting message {i}: role={role}, content_count={len(content) if isinstance(content, list) else 'N/A'}")
+            logger.debug(f"Converting message {i}: role={role}, content_blocks={len(content) if isinstance(content, list) else 'N/A'}")
 
             # Convert content blocks
             anthropic_content = []
             for j, block in enumerate(content):
-                logger.debug(f"  Block {j}: type={type(block).__name__}, value={str(block)[:200]}")
-                if isinstance(block, str):
-                    anthropic_content.append({"type": "text", "text": block})
-                elif isinstance(block, dict):
-                    block_type = block.get("type")
-                    logger.debug(f"    block_type={block_type}, keys={list(block.keys())}")
-                    if block_type == "text":
-                        anthropic_content.append({"type": "text", "text": block.get("text", "")})
-                    elif block_type == "toolUse":
-                        anthropic_content.append({
-                            "type": "tool_use",
-                            "id": block.get("toolUseId", ""),
-                            "name": block.get("name", ""),
-                            "input": block.get("input", {}),
-                        })
-                    elif block_type == "toolResult":
-                        anthropic_content.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.get("toolUseId", ""),
-                            "content": block.get("content", ""),
-                        })
-                    elif "toolUse" in block:
-                        # Strands format: {'toolUse': {...}} without type field
-                        tool_use = block["toolUse"]
-                        anthropic_content.append({
-                            "type": "tool_use",
-                            "id": tool_use.get("toolUseId", ""),
-                            "name": tool_use.get("name", ""),
-                            "input": tool_use.get("input", {}),
-                        })
-                    elif "toolResult" in block:
-                        # Strands format: {'toolResult': {...}} without type field
-                        tool_result = block["toolResult"]
-                        # Tool result content is a list of content blocks in Strands format
-                        result_content = tool_result.get("content", [])
-                        # Convert to string for Anthropic API
-                        if isinstance(result_content, list):
-                            # Extract text from content blocks
-                            text_parts = []
-                            for item in result_content:
-                                if isinstance(item, dict) and "text" in item:
-                                    text_parts.append(item["text"])
-                                elif isinstance(item, str):
-                                    text_parts.append(item)
-                            result_str = "\n".join(text_parts)
-                        else:
-                            result_str = str(result_content)
-                        anthropic_content.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_result.get("toolUseId", ""),
-                            "content": result_str,
-                        })
-                    elif "text" in block and block_type is None:
-                        # Strands format: {'text': '...'} without type field
-                        anthropic_content.append({"type": "text", "text": block.get("text", "")})
-                    else:
-                        logger.warning(f"    UNHANDLED block type! block={block}")
+                converted = self._convert_content_block(block, i, j)
+                if converted:
+                    anthropic_content.append(converted)
 
             result.append({"role": role, "content": anthropic_content})
 
         return result
+
+    def _convert_content_block(
+        self, block: Any, msg_idx: int, block_idx: int
+    ) -> dict[str, Any] | None:
+        """Convert a single content block from Strands to Anthropic format."""
+        if isinstance(block, str):
+            return {"type": "text", "text": block}
+
+        if not isinstance(block, dict):
+            logger.warning(f"Message {msg_idx} block {block_idx}: unexpected type {type(block).__name__}")
+            return None
+
+        block_type = block.get("type")
+
+        # Type-based formats
+        if block_type == "text":
+            return {"type": "text", "text": block.get("text", "")}
+
+        if block_type == "toolUse":
+            return {
+                "type": "tool_use",
+                "id": block.get("toolUseId", ""),
+                "name": block.get("name", ""),
+                "input": block.get("input", {}),
+            }
+
+        if block_type == "toolResult":
+            return {
+                "type": "tool_result",
+                "tool_use_id": block.get("toolUseId", ""),
+                "content": block.get("content", ""),
+            }
+
+        # Wrapper-key formats (Strands style)
+        if "toolUse" in block:
+            tool_use = block["toolUse"]
+            return {
+                "type": "tool_use",
+                "id": tool_use.get("toolUseId", ""),
+                "name": tool_use.get("name", ""),
+                "input": tool_use.get("input", {}),
+            }
+
+        if "toolResult" in block:
+            tool_result = block["toolResult"]
+            result_content = tool_result.get("content", [])
+
+            # Convert content to string for Anthropic API
+            if isinstance(result_content, list):
+                text_parts = []
+                for item in result_content:
+                    if isinstance(item, dict) and "text" in item:
+                        text_parts.append(item["text"])
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                result_str = "\n".join(text_parts)
+            else:
+                result_str = str(result_content)
+
+            return {
+                "type": "tool_result",
+                "tool_use_id": tool_result.get("toolUseId", ""),
+                "content": result_str,
+            }
+
+        # Bare text (no type field)
+        if "text" in block and block_type is None:
+            return {"type": "text", "text": block.get("text", "")}
+
+        # Unhandled format
+        logger.warning(
+            f"Message {msg_idx} block {block_idx}: unhandled format, "
+            f"type={block_type}, keys={list(block.keys())}"
+        )
+        return None
 
     def _convert_tools(self, tool_specs: list[ToolSpec]) -> list[dict[str, Any]]:
         """Convert Strands tool specs to Anthropic format."""
@@ -414,7 +511,7 @@ class AnthropicOAuthModel(Model):
             # No Claude Code prefix - this will likely fail OAuth validation
             # but we send it anyway as a single block
             logger.warning(
-                f"System prompt doesn't start with Claude Code prefix. "
-                f"OAuth validation may fail."
+                "System prompt doesn't start with Claude Code prefix. "
+                "OAuth validation may fail."
             )
             return [{"type": "text", "text": system_prompt}]

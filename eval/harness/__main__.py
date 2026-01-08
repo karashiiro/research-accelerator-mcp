@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 # Allow running as script or module
@@ -101,12 +102,10 @@ async def main() -> int:
 
     logger = logging.getLogger(__name__)
 
-    # Get config
+    # Get config (create modified copy if overrides specified, don't mutate singleton)
     config = get_config()
-
-    # Override model if specified
     if args.model:
-        config.model_id = args.model
+        config = replace(config, model_id=args.model)
 
     print("\n" + "=" * 60)
     print("  Research Accelerator Eval Harness")
@@ -207,12 +206,16 @@ async def main() -> int:
         by_condition.setdefault(r.condition, []).append(r)
 
     for condition, runs in sorted(by_condition.items()):
-        success_rate = sum(1 for r in runs if r.success) / len(runs) * 100
-        avg_tokens = sum(r.total_tokens for r in runs) / len(runs)
+        num_runs = len(runs)
         print(f"\n{condition}:")
-        print(f"  Runs: {len(runs)}")
-        print(f"  Success rate: {success_rate:.1f}%")
-        print(f"  Avg tokens: {avg_tokens:.0f}")
+        print(f"  Runs: {num_runs}")
+        if num_runs > 0:
+            success_rate = sum(1 for r in runs if r.success) / num_runs * 100
+            avg_tokens = sum(r.total_tokens for r in runs) / num_runs
+            print(f"  Success rate: {success_rate:.1f}%")
+            print(f"  Avg tokens: {avg_tokens:.0f}")
+        else:
+            print("  (no runs completed)")
 
     print(f"\nTotal runs: {len(results)}")
     print(f"Results: {csv_path}")

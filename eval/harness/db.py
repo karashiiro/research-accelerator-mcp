@@ -5,9 +5,37 @@ Handles clearing, snapshotting, and restoring the research database
 to ensure consistent experimental conditions across runs.
 """
 
+import logging
 import shutil
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
+
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _get_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
+    """Context manager for database connections."""
+    conn = sqlite3.connect(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _remove_wal_files(db_path: Path) -> None:
+    """Remove WAL and SHM files if they exist."""
+    wal_path = db_path.with_suffix(db_path.suffix + "-wal")
+    shm_path = db_path.with_suffix(db_path.suffix + "-shm")
+
+    for path in [wal_path, shm_path]:
+        if path.exists():
+            try:
+                path.unlink()
+            except OSError as e:
+                logger.warning(f"Failed to remove {path}: {e}")
 
 
 class DatabaseManager:
@@ -40,29 +68,27 @@ class DatabaseManager:
         Drops and recreates the FTS5 table to ensure a clean state.
         Also removes any WAL files.
         """
-        # Close any existing connections by removing the file
+        # Remove existing database and WAL files
         if self.db_path.exists():
-            self.db_path.unlink()
+            try:
+                self.db_path.unlink()
+            except OSError as e:
+                logger.warning(f"Failed to remove database: {e}")
 
-        # Also remove WAL and SHM files if they exist
-        wal_path = Path(str(self.db_path) + "-wal")
-        shm_path = Path(str(self.db_path) + "-shm")
-        if wal_path.exists():
-            wal_path.unlink()
-        if shm_path.exists():
-            shm_path.unlink()
+        _remove_wal_files(self.db_path)
 
         # Create fresh database with schema
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS research USING fts5(
-                description,
-                resource UNINDEXED
-            )
-        """)
-        conn.commit()
-        conn.close()
+        with _get_connection(self.db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS research USING fts5(
+                    description,
+                    resource UNINDEXED
+                )
+            """)
+            conn.commit()
+
+        logger.debug(f"Database cleared: {self.db_path}")
 
     def create_snapshot(self, task_id: str, run_id: int) -> Path:
         """
@@ -79,13 +105,13 @@ class DatabaseManager:
         snapshot_path = self.snapshots_dir / snapshot_name
 
         # Checkpoint WAL to ensure all data is in main file
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        conn.close()
+        with _get_connection(self.db_path) as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
-        # Copy the database file
+        # Copy the database file (after checkpoint, WAL should be empty)
         shutil.copy2(self.db_path, snapshot_path)
 
+        logger.debug(f"Created snapshot: {snapshot_path}")
         return snapshot_path
 
     def restore_snapshot(self, snapshot_path: Path) -> None:
@@ -98,20 +124,19 @@ class DatabaseManager:
         if not snapshot_path.exists():
             raise FileNotFoundError(f"Snapshot not found: {snapshot_path}")
 
-        # Clear existing database
+        # Remove existing database and WAL files
         if self.db_path.exists():
-            self.db_path.unlink()
+            try:
+                self.db_path.unlink()
+            except OSError as e:
+                logger.warning(f"Failed to remove database: {e}")
 
-        # Remove WAL files
-        wal_path = Path(str(self.db_path) + "-wal")
-        shm_path = Path(str(self.db_path) + "-shm")
-        if wal_path.exists():
-            wal_path.unlink()
-        if shm_path.exists():
-            shm_path.unlink()
+        _remove_wal_files(self.db_path)
 
         # Copy snapshot to database path
         shutil.copy2(snapshot_path, self.db_path)
+
+        logger.debug(f"Restored snapshot: {snapshot_path}")
 
     def load_ideal_warm_entries(self, entries: list[dict[str, str]]) -> None:
         """
@@ -126,34 +151,36 @@ class DatabaseManager:
         self.clear_database()
 
         # Insert entries
-        conn = sqlite3.connect(self.db_path)
-        for entry in entries:
-            conn.execute(
-                "INSERT INTO research (description, resource) VALUES (?, ?)",
-                (entry["description"], entry["resource"]),
-            )
-        conn.commit()
-        conn.close()
+        with _get_connection(self.db_path) as conn:
+            for entry in entries:
+                try:
+                    conn.execute(
+                        "INSERT INTO research (description, resource) VALUES (?, ?)",
+                        (entry["description"], entry["resource"]),
+                    )
+                except sqlite3.Error as e:
+                    logger.error(f"Failed to insert entry: {e}")
+            conn.commit()
+
+        logger.debug(f"Loaded {len(entries)} ideal warm entries")
 
     def get_entry_count(self) -> int:
         """Get the number of entries in the database."""
         if not self.db_path.exists():
             return 0
 
-        conn = sqlite3.connect(self.db_path)
-        count = conn.execute("SELECT COUNT(*) FROM research").fetchone()[0]
-        conn.close()
-        return count
+        with _get_connection(self.db_path) as conn:
+            result = conn.execute("SELECT COUNT(*) FROM research").fetchone()
+            return result[0] if result else 0
 
-    def get_all_entries(self) -> list[dict[str, str]]:
+    def get_all_entries(self) -> list[dict[str, str | int]]:
         """Get all entries from the database."""
         if not self.db_path.exists():
             return []
 
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute("SELECT rowid, description, resource FROM research").fetchall()
-        conn.close()
+        with _get_connection(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT rowid, description, resource FROM research").fetchall()
 
         return [
             {"rowid": row["rowid"], "description": row["description"], "resource": row["resource"]}
