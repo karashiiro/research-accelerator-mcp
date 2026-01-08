@@ -84,8 +84,8 @@ When given a research task:
 Your goal is to help the user build a comprehensive understanding of their research topic with actionable, well-sourced information."""
 
 # Server startup configuration
-SERVER_STARTUP_TIMEOUT = 10.0  # seconds
-SERVER_POLL_INTERVAL = 0.2  # seconds
+SERVER_STARTUP_TIMEOUT = 15.0  # seconds (Windows can be slow to start processes)
+SERVER_POLL_INTERVAL = 0.3  # seconds
 
 # Agent execution timeout
 AGENT_TIMEOUT = 600.0  # 10 minutes
@@ -189,13 +189,15 @@ class EvalRunner:
 
             # Try to connect
             try:
-                with httpx.Client(timeout=1.0) as client:
+                # Short timeout for quick polling; we'll retry if it fails
+                with httpx.Client(timeout=0.5) as client:
                     # Just check if the server accepts connections
                     # The /mcp endpoint may not respond to GET, but connection success is enough
                     response = client.get(f"http://{self.config.mcp_host}:{self.config.mcp_port}/")
                     # Any response (even 404) means server is up
                     return True
-            except (httpx.ConnectError, httpx.ReadTimeout):
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+                # Server not ready yet, keep polling
                 pass
 
             time.sleep(SERVER_POLL_INTERVAL)
