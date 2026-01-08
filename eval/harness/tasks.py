@@ -100,7 +100,8 @@ def _validate_task(task_id: str, task_data: dict) -> list[str]:
             if not isinstance(entry, dict):
                 errors.append(f"Task {task_id}: warm_index_entries[{i}] must be a dict")
             elif "description" not in entry or "resource" not in entry:
-                errors.append(f"Task {task_id}: warm_index_entries[{i}] missing 'description' or 'resource'")
+                msg = f"Task {task_id}: warm_index_entries[{i}] missing fields"
+                errors.append(msg)
 
     return errors
 

@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 CLAUDE_CODE_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
 
 # System prompts from eval/prompt-*.md
+# fmt: off
+# ruff: noqa: E501
 CONTROL_PROMPT = CLAUDE_CODE_PREFIX + """You are a research assistant helping users find and synthesize information about technical topics.
 
 When given a research task:
@@ -82,6 +84,7 @@ When given a research task:
 7. **Acknowledge limitations**: Be clear about what you couldn't find or areas of uncertainty.
 
 Your goal is to help the user build a comprehensive understanding of their research topic with actionable, well-sourced information."""
+# fmt: on
 
 # Server startup configuration
 SERVER_STARTUP_TIMEOUT = 15.0  # seconds (Windows can be slow to start processes)
@@ -193,8 +196,8 @@ class EvalRunner:
                 with httpx.Client(timeout=0.5) as client:
                     # Just check if the server accepts connections
                     # The /mcp endpoint may not respond to GET, but connection success is enough
-                    response = client.get(f"http://{self.config.mcp_host}:{self.config.mcp_port}/")
-                    # Any response (even 404) means server is up
+                    url = f"http://{self.config.mcp_host}:{self.config.mcp_port}/"
+                    client.get(url)  # Any response (even 404) means server is up
                     return True
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
                 # Server not ready yet, keep polling

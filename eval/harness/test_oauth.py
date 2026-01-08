@@ -57,7 +57,10 @@ async def test_direct_with_tools():
 
     try:
         response_text = ""
-        async for event in model.stream(test_messages, tool_specs=tool_specs, system_prompt=system_prompt):
+        stream = model.stream(
+            test_messages, tool_specs=tool_specs, system_prompt=system_prompt
+        )
+        async for event in stream:
             if "contentBlockDelta" in event:
                 delta = event["contentBlockDelta"].get("delta", {})
                 if "text" in delta:
@@ -126,6 +129,7 @@ async def test_agent_with_long_prompt():
     model = AnthropicOAuthModel(oauth, model_id=config.model_id, max_tokens=100)
 
     # The actual prompt from runner.py
+    # ruff: noqa: E501
     CLAUDE_CODE_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
     system_prompt = CLAUDE_CODE_PREFIX + """You are a research assistant helping users find and synthesize information about technical topics.
 
@@ -248,10 +252,10 @@ async def test_content_blocks_system():
     oauth = await get_or_create_oauth()
 
     # We need to call the API directly with content blocks for system
-    import httpx
-    import json
 
-    from .model import ANTHROPIC_API, MESSAGES_ENDPOINT, REQUIRED_BETAS, CLAUDE_CODE_USER_AGENT
+    import httpx
+
+    from .model import ANTHROPIC_API, CLAUDE_CODE_USER_AGENT, MESSAGES_ENDPOINT, REQUIRED_BETAS
 
     access_token = await oauth.ensure_valid_token()
 
@@ -260,7 +264,9 @@ async def test_content_blocks_system():
         "model": config.model_id,
         "max_tokens": 100,
         "stream": False,  # Non-streaming for simplicity
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "Say 'test9' and nothing else."}]}],
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "Say 'test9'."}]}
+        ],
         "system": [
             {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
             {"type": "text", "text": "Be helpful and concise."},

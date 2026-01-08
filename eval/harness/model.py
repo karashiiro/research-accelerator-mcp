@@ -8,7 +8,6 @@ import asyncio
 import json
 import logging
 import platform
-import sys
 from typing import Any, AsyncIterator
 
 import httpx
@@ -53,16 +52,13 @@ def _get_platform_info() -> dict[str, str]:
     machine = platform.machine().lower()
 
     # Map platform to expected values
-    os_name = {"Windows": "Windows", "Darwin": "macOS", "Linux": "Linux"}.get(system, system)
-    arch = {"x86_64": "x64", "amd64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(machine, machine)
-
-    # Get Python/Node version (we pretend to be Node for Claude Code compatibility)
-    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    os_map = {"Windows": "Windows", "Darwin": "macOS", "Linux": "Linux"}
+    arch_map = {"x86_64": "x64", "amd64": "x64", "arm64": "arm64", "aarch64": "arm64"}
 
     return {
-        "os": os_name,
-        "arch": arch,
-        "runtime_version": f"v22.14.0",  # Pretend to be Node for Claude Code
+        "os": os_map.get(system, system),
+        "arch": arch_map.get(machine, machine),
+        "runtime_version": "v22.14.0",  # Pretend to be Node for Claude Code
     }
 
 
@@ -154,7 +150,8 @@ class AnthropicOAuthModel(Model):
         if tool_specs:
             payload["tools"] = self._convert_tools(tool_specs)
 
-        logger.debug(f"Request payload: model={payload['model']}, messages={len(payload['messages'])}")
+        msg_count = len(payload['messages'])
+        logger.debug(f"Request payload: model={payload['model']}, messages={msg_count}")
 
         # Retry loop for transient errors
         last_error: Exception | None = None
@@ -366,7 +363,8 @@ class AnthropicOAuthModel(Model):
         for i, msg in enumerate(messages):
             role = msg.get("role", "user")
             content = msg.get("content", [])
-            logger.debug(f"Converting message {i}: role={role}, content_blocks={len(content) if isinstance(content, list) else 'N/A'}")
+            block_count = len(content) if isinstance(content, list) else 'N/A'
+            logger.debug(f"Converting message {i}: role={role}, content_blocks={block_count}")
 
             # Convert content blocks
             anthropic_content = []
@@ -387,7 +385,8 @@ class AnthropicOAuthModel(Model):
             return {"type": "text", "text": block}
 
         if not isinstance(block, dict):
-            logger.warning(f"Message {msg_idx} block {block_idx}: unexpected type {type(block).__name__}")
+            type_name = type(block).__name__
+            logger.warning(f"Message {msg_idx} block {block_idx}: unexpected type {type_name}")
             return None
 
         block_type = block.get("type")
