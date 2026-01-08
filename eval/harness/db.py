@@ -65,21 +65,30 @@ class DatabaseManager:
         """
         Clear all entries from the database.
 
-        Drops and recreates the FTS5 table to ensure a clean state.
+        Tries to delete the file, but if locked (Windows), drops and recreates the table.
         Also removes any WAL files.
         """
-        # Remove existing database and WAL files
+        file_deleted = False
+
+        # Try to remove existing database and WAL files
         if self.db_path.exists():
             try:
                 self.db_path.unlink()
+                file_deleted = True
             except OSError as e:
-                logger.warning(f"Failed to remove database: {e}")
+                logger.warning(f"Database file locked, will truncate instead: {e}")
 
-        _remove_wal_files(self.db_path)
+        if file_deleted:
+            _remove_wal_files(self.db_path)
 
-        # Create fresh database with schema
+        # Create/recreate database with schema
         with _get_connection(self.db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
+
+            if not file_deleted:
+                # File was locked - drop and recreate the table to clear data
+                conn.execute("DROP TABLE IF EXISTS research")
+
             conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS research USING fts5(
                     description,
@@ -124,17 +133,35 @@ class DatabaseManager:
         if not snapshot_path.exists():
             raise FileNotFoundError(f"Snapshot not found: {snapshot_path}")
 
-        # Remove existing database and WAL files
+        # Try to remove existing database and WAL files
+        file_deleted = False
         if self.db_path.exists():
             try:
                 self.db_path.unlink()
+                file_deleted = True
             except OSError as e:
-                logger.warning(f"Failed to remove database: {e}")
+                logger.warning(f"Database file locked, will copy contents instead: {e}")
 
-        _remove_wal_files(self.db_path)
+        if file_deleted:
+            _remove_wal_files(self.db_path)
+            # Copy snapshot to database path
+            shutil.copy2(snapshot_path, self.db_path)
+        else:
+            # File locked - copy contents via SQL instead
+            with _get_connection(self.db_path) as conn:
+                conn.execute("DROP TABLE IF EXISTS research")
+                conn.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS research USING fts5(
+                        description,
+                        resource UNINDEXED
+                    )
+                """)
 
-        # Copy snapshot to database path
-        shutil.copy2(snapshot_path, self.db_path)
+                # Attach snapshot and copy data
+                conn.execute(f"ATTACH DATABASE ? AS snapshot", (str(snapshot_path),))
+                conn.execute("INSERT INTO research SELECT * FROM snapshot.research")
+                conn.execute("DETACH DATABASE snapshot")
+                conn.commit()
 
         logger.debug(f"Restored snapshot: {snapshot_path}")
 

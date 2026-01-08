@@ -36,6 +36,12 @@ tasks:
         resource: "https://arxiv.org/abs/1409.0473"
       - description: "Luong et al. 2015 - Effective Approaches to Attention-based Neural Machine Translation. Compares global vs local attention mechanisms."
         resource: "https://arxiv.org/abs/1508.04025"
+      - description: "Sutskever et al. 2014 - Sequence to Sequence Learning with Neural Networks. Foundational encoder-decoder architecture using LSTMs for sequence transduction."
+        resource: "https://arxiv.org/abs/1409.3215"
+      - description: "Cheng et al. 2016 - Long Short-Term Memory-Networks for Machine Reading. First introduction of self-attention (intra-attention) within sequences."
+        resource: "https://arxiv.org/abs/1601.06733"
+      - description: "Xu et al. 2015 - Show, Attend and Tell: Neural Image Caption Generation with Visual Attention. Extended attention mechanisms to computer vision with spatial attention."
+        resource: "https://arxiv.org/abs/1502.03044"
 
   T1.2:
     family: Transformer
@@ -185,6 +191,69 @@ tasks:
           - "Chroma"
     success_threshold: 2
     # Uses T3.1's warm_index_entries for related-warm condition
+
+  # ===========================================
+  # Task Family 4: Documentation Lookup
+  # ===========================================
+
+  T4.1:
+    family: Documentation
+    type: primary
+    prompt: "Find documentation on React hooks - specifically useEffect, useState, and useCallback."
+    ground_truth:
+      - paper: "React useEffect docs"
+        matchers:
+          - "react.dev.*useEffect"
+          - "reactjs.org.*useEffect"
+          - "useEffect.*hook"
+      - paper: "React useState docs"
+        matchers:
+          - "react.dev.*useState"
+          - "reactjs.org.*useState"
+          - "useState.*hook"
+      - paper: "React useCallback docs"
+        matchers:
+          - "react.dev.*useCallback"
+          - "reactjs.org.*useCallback"
+          - "useCallback.*hook"
+    success_threshold: 2
+    related_task: T4.2
+    warm_index_entries:
+      - description: "React useEffect Hook - Official documentation for useEffect, the Effect Hook for performing side effects in function components. Covers cleanup, dependencies, and common patterns."
+        resource: "https://react.dev/reference/react/useEffect"
+      - description: "React useState Hook - Official documentation for useState, the State Hook for adding state to function components. Covers initial state, updating state, and functional updates."
+        resource: "https://react.dev/reference/react/useState"
+      - description: "React useCallback Hook - Official documentation for useCallback, a hook that returns a memoized callback function. Useful for optimizing child component re-renders."
+        resource: "https://react.dev/reference/react/useCallback"
+      - description: "React useMemo Hook - Official documentation for useMemo, a hook that memoizes expensive computations between re-renders."
+        resource: "https://react.dev/reference/react/useMemo"
+      - description: "React Hooks Overview - Introduction to Hooks, rules of hooks, and the motivation behind the Hooks API in React."
+        resource: "https://react.dev/reference/react/hooks"
+
+  T4.2:
+    family: Documentation
+    type: related
+    primary_task: T4.1
+    prompt: "Find documentation on React performance optimization - memoization, lazy loading, and preventing unnecessary re-renders."
+    ground_truth:
+      - paper: "React.memo docs"
+        matchers:
+          - "react.dev.*memo"
+          - "React.memo"
+          - "memo.*component"
+      - paper: "React.lazy docs"
+        matchers:
+          - "react.dev.*lazy"
+          - "React.lazy"
+          - "lazy.*loading"
+          - "code.*splitting"
+      - paper: "useMemo or useCallback"
+        matchers:
+          - "useMemo"
+          - "useCallback"
+          - "memoiz"
+    success_threshold: 2
+    # Uses T4.1's warm_index_entries for related-warm condition
 
   # ===========================================
   # Unrelated Control Task
