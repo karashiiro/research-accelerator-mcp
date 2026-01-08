@@ -636,22 +636,30 @@ class EvalRunner:
                 result["output"] = str(response)
 
             # Extract metrics from response
-            if hasattr(response, "metrics"):
+            if hasattr(response, "metrics") and response.metrics:
                 resp_metrics = response.metrics
-                metrics.input_tokens = getattr(resp_metrics, "input_tokens", 0)
-                metrics.output_tokens = getattr(resp_metrics, "output_tokens", 0)
+                # Strands stores usage in accumulated_usage dict with camelCase keys
+                usage = getattr(resp_metrics, "accumulated_usage", {})
+                metrics.input_tokens = usage.get("inputTokens", 0)
+                metrics.output_tokens = usage.get("outputTokens", 0)
 
-            # Extract tool calls
-            if hasattr(response, "tool_calls"):
-                result["tool_calls"] = response.tool_calls
-                search, create, web = count_tool_calls([], response.tool_calls)
-                metrics.research_search_calls = search
-                metrics.research_create_calls = create
-                metrics.web_search_calls = web
+            # Extract tool calls from metrics.tool_metrics
+            if hasattr(response, "metrics") and response.metrics:
+                tool_metrics = getattr(response.metrics, "tool_metrics", {})
+                # tool_metrics is dict of {tool_name: ToolMetrics}
+                tool_call_summary = {}
+                for tool_name, tm in tool_metrics.items():
+                    tool_call_summary[tool_name] = getattr(tm, "call_count", 0)
+                result["tool_calls"] = tool_call_summary
 
-            # Extract messages for trace
-            if hasattr(response, "messages"):
-                result["messages"] = response.messages
+                # Count specific tools
+                metrics.research_search_calls = tool_call_summary.get("research_search", 0)
+                metrics.research_create_calls = tool_call_summary.get("research_create", 0)
+                metrics.web_search_calls = tool_call_summary.get("tavily_search", 0)
+
+            # Extract final message for trace (full conversation history not available)
+            if hasattr(response, "message") and response.message:
+                result["messages"] = [response.message]
 
         except Exception as e:
             result["error"] = str(e)
