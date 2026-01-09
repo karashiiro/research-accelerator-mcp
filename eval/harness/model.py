@@ -205,10 +205,7 @@ class ZAIModel(Model):
                     if event_type == "message_start":
                         # Yield message start
                         yield {"messageStart": {"role": "assistant"}}
-
-                        # Track input tokens from message start
-                        usage = event.get("message", {}).get("usage", {})
-                        input_tokens = usage.get("input_tokens", 0)
+                        # Note: z.ai reports input_tokens=0 here; actual value comes in message_delta
 
                     elif event_type == "content_block_start":
                         # New content block starting
@@ -258,9 +255,16 @@ class ZAIModel(Model):
                         delta = event.get("delta", {})
                         stop_reason = delta.get("stop_reason", "end_turn")
 
-                        # Track output tokens
+                        # Track tokens from message_delta (z.ai reports final counts here)
                         usage = event.get("usage", {})
+                        # z.ai returns input_tokens in message_delta, not message_start
+                        if "input_tokens" in usage:
+                            input_tokens = usage.get("input_tokens", 0)
                         output_tokens = usage.get("output_tokens", 0)
+                        logger.debug(
+                            f"message_delta usage: input_tokens={input_tokens}, "
+                            f"output_tokens={output_tokens}"
+                        )
 
                         # Map stop reason
                         strands_stop_reason = self._map_stop_reason(stop_reason)
