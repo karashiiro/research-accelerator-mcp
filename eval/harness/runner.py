@@ -663,6 +663,11 @@ class EvalRunner:
         with mcp_client:
             mcp_tools = mcp_client.list_tools_sync()
 
+            # Filter to only research_search and research_create
+            # Exclude debug_research_query and research_delete to reduce token overhead
+            allowed_tools = {"research_search", "research_create"}
+            mcp_tools = [t for t in mcp_tools if t.tool_spec.get("name") in allowed_tools]
+
             agent = Agent(
                 model=model,
                 tools=[tavily_search, *mcp_tools],
