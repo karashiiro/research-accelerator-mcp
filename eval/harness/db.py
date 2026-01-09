@@ -158,7 +158,7 @@ class DatabaseManager:
                 """)
 
                 # Attach snapshot and copy data
-                conn.execute(f"ATTACH DATABASE ? AS snapshot", (str(snapshot_path),))
+                conn.execute("ATTACH DATABASE ? AS snapshot", (str(snapshot_path),))
                 conn.execute("INSERT INTO research SELECT * FROM snapshot.research")
                 conn.execute("DETACH DATABASE snapshot")
                 conn.commit()

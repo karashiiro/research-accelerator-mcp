@@ -100,11 +100,11 @@ This minimal diff ensures that any performance differences are attributable to t
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| Model | `claude-sonnet-4-20250514` | Balance of capability and cost; specify exact version for reproducibility |
+| Model | `GLM-4.7` (via z.ai API) | Default model; z.ai also supports `GLM-4.5-Air` for faster runs |
 | Temperature | `0` | Deterministic outputs for reproducibility |
 | Max tokens | `4096` | Sufficient for research synthesis tasks |
 
-**Note**: If comparing across models, run the full matrix for each model separately.
+**Note**: The eval harness uses z.ai's Anthropic-compatible API. Configure via `ZAI_API_KEY` environment variable.
 
 ### Database Management
 

@@ -2,10 +2,9 @@
 CLI entry point for the eval harness.
 
 Usage:
-    python -m eval.harness [--tasks T1.1 T2.1] [--runs 5] [--model claude-sonnet-4-20250514]
+    python -m eval.harness [--tasks T1.1 T2.1] [--runs 5] [--model GLM-4.7]
 
-OAuth tokens are saved to .oauth_tokens.json and reused across runs.
-Use --reauth to force re-authentication.
+Requires ZAI_API_KEY environment variable to be set.
 """
 
 import argparse
@@ -21,8 +20,7 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     __package__ = "eval.harness"
 
-from .config import get_config
-from .oauth import get_or_create_oauth
+from .config import ConfigError, get_config
 from .runner import EvalRunner, save_results_csv
 
 
@@ -53,7 +51,10 @@ Examples:
   python -m eval.harness --tasks T1.1 T2.1 --runs 3
 
   # Run with a different model
-  python -m eval.harness --model claude-opus-4-20250514
+  python -m eval.harness --model GLM-4.5-Air
+
+  # Validate API connection before running
+  python -m eval.harness --validate
         """,
     )
 
@@ -69,7 +70,7 @@ Examples:
     )
     parser.add_argument(
         "--model",
-        help="Model ID to use (default: from config)",
+        help="Model ID to use (default: GLM-4.7)",
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -77,19 +78,9 @@ Examples:
         help="Enable verbose logging",
     )
     parser.add_argument(
-        "--reauth",
-        action="store_true",
-        help="Force re-authentication (ignore saved tokens)",
-    )
-    parser.add_argument(
-        "--auth-only",
-        action="store_true",
-        help="Only authenticate and save tokens, don't run eval",
-    )
-    parser.add_argument(
         "--validate",
         action="store_true",
-        help="Validate OAuth by making a test API call",
+        help="Validate API connection by making a test call",
     )
 
     return parser.parse_args()
@@ -103,7 +94,12 @@ async def main() -> int:
     logger = logging.getLogger(__name__)
 
     # Get config (create modified copy if overrides specified, don't mutate singleton)
-    config = get_config()
+    try:
+        config = get_config()
+    except ConfigError as e:
+        print(f"\nConfiguration error: {e}")
+        return 1
+
     if args.model:
         config = replace(config, model_id=args.model)
 
@@ -111,6 +107,7 @@ async def main() -> int:
     print("  Research Accelerator Eval Harness")
     print("=" * 60)
     print(f"\nModel: {config.model_id}")
+    print(f"API: {config.zai_base_url}")
     print(f"Runs per condition: {args.runs or config.runs_per_condition}")
     if args.tasks:
         print(f"Tasks: {', '.join(args.tasks)}")
@@ -118,36 +115,26 @@ async def main() -> int:
         print("Tasks: All primary tasks")
     print()
 
-    # OAuth authentication (reuses saved tokens if available)
-    print("Step 1: Authentication")
-    print("-" * 40)
-    try:
-        oauth = await get_or_create_oauth(force_interactive=args.reauth)
-    except Exception as e:
-        logger.error(f"Authentication failed: {e}")
-        print(f"\nError: {e}")
-        return 1
-
-    # Exit early if --auth-only
-    if args.auth_only and not args.validate:
-        print("Authentication complete! Tokens saved for future runs.")
-        return 0
-
-    # Validate OAuth with a test API call
+    # Validate API connection if requested
     if args.validate:
-        print("\nValidating OAuth with test API call...")
+        print("Step 1: Validating API Connection")
         print("-" * 40)
         try:
-            from .model import AnthropicOAuthModel
+            from .model import ZAIModel
 
-            model = AnthropicOAuthModel(oauth, model_id=config.model_id, max_tokens=100)
+            model = ZAIModel(
+                api_key=config.zai_api_key,
+                base_url=config.zai_base_url,
+                model_id=config.model_id,
+                max_tokens=100,
+            )
 
-            # Make a simple test call with Claude Code system prompt
+            # Make a simple test call
             test_messages = [{
                 "role": "user",
                 "content": [{"type": "text", "text": "Say 'hello' and nothing else."}],
             }]
-            system_prompt = "You are Claude Code, Anthropic's official CLI for Claude."
+            system_prompt = "You are a helpful assistant."
 
             response_text = ""
             async for event in model.stream(test_messages, system_prompt=system_prompt):
@@ -160,21 +147,20 @@ async def main() -> int:
                     print(f"\nAPI Response: {response_text.strip()}")
                     print(f"Tokens used: {usage.get('totalTokens', 'unknown')}")
 
-            print("\n✓ OAuth validation successful! API is working.")
+            print("\n✓ API validation successful!")
+            print()
 
         except Exception as e:
             logger.error(f"Validation failed: {e}", exc_info=True)
             print(f"\n✗ Validation failed: {e}")
             return 1
 
-        if args.auth_only:
-            return 0
-
     # Run evaluation
-    print("\nStep 2: Running Evaluation")
+    step_num = 2 if args.validate else 1
+    print(f"Step {step_num}: Running Evaluation")
     print("-" * 40)
     try:
-        runner = EvalRunner(oauth=oauth, config=config)
+        runner = EvalRunner(config=config)
         results = await runner.run_full_eval(
             task_ids=args.tasks,
             runs_per_condition=args.runs,
@@ -185,7 +171,8 @@ async def main() -> int:
         return 1
 
     # Save results
-    print("\nStep 3: Saving Results")
+    step_num += 1
+    print(f"\nStep {step_num}: Saving Results")
     print("-" * 40)
     try:
         csv_path = save_results_csv(results, config.results_dir)

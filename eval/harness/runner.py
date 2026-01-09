@@ -28,20 +28,16 @@ from strands_tools.tavily import tavily_search
 from .config import Config
 from .db import DatabaseManager
 from .metrics import RunMetrics, TaskMatcher, score_description_quality
-from .model import AnthropicOAuthModel
-from .oauth import OAuthManager
+from .model import ZAIModel
 from .tasks import Task, get_primary_tasks, get_related_task, get_tasks, get_unrelated_task
 
 logger = logging.getLogger(__name__)
 
 
-# Claude Code system prompt prefix (required for OAuth authentication!)
-CLAUDE_CODE_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
-
 # System prompts from eval/prompt-*.md
 # fmt: off
 # ruff: noqa: E501
-CONTROL_PROMPT = CLAUDE_CODE_PREFIX + """You are a research assistant helping users find and synthesize information about technical topics.
+CONTROL_PROMPT = """You are a research assistant helping users find and synthesize information about technical topics.
 
 When given a research task:
 
@@ -58,7 +54,7 @@ When given a research task:
 
 Your goal is to efficiently find and present well-sourced information on the research topic."""
 
-ACCELERATOR_PROMPT = CLAUDE_CODE_PREFIX + """You are a research assistant helping users find and synthesize information about technical topics.
+ACCELERATOR_PROMPT = """You are a research assistant helping users find and synthesize information about technical topics.
 
 You have access to a Research Index that may contain relevant resources from prior research.
 
@@ -110,10 +106,8 @@ class EvalRunner:
 
     def __init__(
         self,
-        oauth: OAuthManager,
         config: Config,
     ) -> None:
-        self.oauth = oauth
         self.config = config
         self.db = DatabaseManager(config.db_path, config.snapshots_dir)
         self.results: list[RunMetrics] = []
@@ -352,9 +346,10 @@ class EvalRunner:
         )
 
         try:
-            # Create agent with OAuth model but NO MCP tools
-            model = AnthropicOAuthModel(
-                self.oauth,
+            # Create agent with z.ai model but NO MCP tools
+            model = ZAIModel(
+                api_key=self.config.zai_api_key,
+                base_url=self.config.zai_base_url,
                 model_id=self.config.model_id,
             )
 
@@ -653,8 +648,9 @@ class EvalRunner:
         system_prompt: str,
     ) -> dict[str, Any]:
         """Run agent with MCP tools connected."""
-        model = AnthropicOAuthModel(
-            self.oauth,
+        model = ZAIModel(
+            api_key=self.config.zai_api_key,
+            base_url=self.config.zai_base_url,
             model_id=self.config.model_id,
         )
 

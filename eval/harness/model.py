@@ -1,13 +1,12 @@
 """
-Custom Strands model provider using OAuth authentication.
+Custom Strands model provider for z.ai API.
 
-Calls Anthropic API directly with OAuth Bearer tokens instead of API keys.
+Calls z.ai's Anthropic-compatible API with API key authentication.
 """
 
 import asyncio
 import json
 import logging
-import platform
 from typing import Any, AsyncIterator
 
 import httpx
@@ -16,29 +15,11 @@ from strands.types.content import Messages
 from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolSpec
 
-from .oauth import OAuthManager
-
 logger = logging.getLogger(__name__)
 
 
 # API Configuration
-ANTHROPIC_API = "https://api.anthropic.com"
 MESSAGES_ENDPOINT = "/v1/messages"
-
-# Required beta headers for Claude Code OAuth API access
-REQUIRED_BETAS = [
-    "oauth-2025-04-20",
-    "claude-code-20250219",
-    "interleaved-thinking-2025-05-14",
-    "fine-grained-tool-streaming-2025-05-14",
-]
-
-# Claude Code client identification
-CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.0 (external, cli)"
-
-# Claude Code system prompt prefix - MUST be sent as first content block
-# The OAuth validation only checks the first block, so we split on this
-CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -46,44 +27,29 @@ RETRY_BACKOFF_BASE = 1.0  # seconds
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
-def _get_platform_info() -> dict[str, str]:
-    """Get platform-specific information for headers."""
-    system = platform.system()
-    machine = platform.machine().lower()
-
-    # Map platform to expected values
-    os_map = {"Windows": "Windows", "Darwin": "macOS", "Linux": "Linux"}
-    arch_map = {"x86_64": "x64", "amd64": "x64", "arm64": "arm64", "aarch64": "arm64"}
-
-    return {
-        "os": os_map.get(system, system),
-        "arch": arch_map.get(machine, machine),
-        "runtime_version": "v22.14.0",  # Pretend to be Node for Claude Code
-    }
-
-
-class AnthropicOAuthModel(Model):
+class ZAIModel(Model):
     """
-    Strands model provider using Anthropic OAuth authentication.
+    Strands model provider for z.ai's Anthropic-compatible API.
 
-    Instead of using an API key, this provider uses OAuth access tokens
-    obtained through the PKCE flow.
+    Uses API key authentication to call z.ai's GLM models via their
+    Anthropic-compatible endpoint.
     """
 
     def __init__(
         self,
-        oauth_manager: OAuthManager,
-        model_id: str = "claude-sonnet-4-20250514",
+        api_key: str,
+        base_url: str = "https://api.z.ai/api/anthropic",
+        model_id: str = "GLM-4.7",
         max_tokens: int = 4096,
         temperature: float = 0.0,
     ) -> None:
-        self.oauth = oauth_manager
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")  # Remove trailing slash if present
         self._config = {
             "model_id": model_id,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        self._platform_info = _get_platform_info()
 
     def update_config(self, **kwargs: Any) -> None:
         """Update model configuration."""
@@ -103,10 +69,10 @@ class AnthropicOAuthModel(Model):
         """
         Generate structured output conforming to a schema.
 
-        Not implemented for OAuth model - use stream() instead.
+        Not implemented for ZAIModel - use stream() instead.
         """
         raise NotImplementedError(
-            "structured_output is not implemented for AnthropicOAuthModel. "
+            "structured_output is not implemented for ZAIModel. "
             "Use stream() for standard generation."
         )
 
@@ -118,18 +84,12 @@ class AnthropicOAuthModel(Model):
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         """
-        Stream responses from Anthropic API using OAuth.
+        Stream responses from z.ai API.
 
-        Converts Anthropic SSE events to Strands StreamEvent format.
+        Converts Anthropic-format SSE events to Strands StreamEvent format.
         Includes automatic retry with exponential backoff for transient errors.
         """
-        # Debug logging (only at DEBUG level to avoid spam)
         logger.debug(f"stream() called with {len(messages)} messages")
-        logger.debug(f"  system_prompt present: {system_prompt is not None}")
-        if system_prompt:
-            logger.debug(f"  system_prompt starts with: {system_prompt[:100]}...")
-        else:
-            logger.warning("  NO SYSTEM PROMPT! This will cause OAuth auth error!")
 
         # Build request payload
         payload: dict[str, Any] = {
@@ -143,9 +103,8 @@ class AnthropicOAuthModel(Model):
             payload["temperature"] = self._config["temperature"]
 
         if system_prompt:
-            # Convert system prompt to content blocks for OAuth compatibility
-            # The API validates only the first block, so we MUST split on the prefix
-            payload["system"] = self._convert_system_prompt(system_prompt)
+            # z.ai accepts system prompt as a simple string or content blocks
+            payload["system"] = system_prompt
 
         if tool_specs:
             payload["tools"] = self._convert_tools(tool_specs)
@@ -186,36 +145,15 @@ class AnthropicOAuthModel(Model):
         self, payload: dict[str, Any]
     ) -> AsyncIterator[StreamEvent]:
         """Execute streaming request with a fresh client."""
-        # Get valid access token (may trigger refresh)
-        access_token = await self.oauth.ensure_valid_token()
-
-        # Build headers - must identify as Claude Code client for OAuth tokens
+        # Build headers for z.ai API
         headers = {
-            # Auth
-            "Authorization": f"Bearer {access_token}",
+            # Auth - z.ai uses x-api-key header
+            "x-api-key": self._api_key,
             # Content
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate",
-            "Accept-Language": "*",
-            # Anthropic specific
+            # Anthropic API version (z.ai is Anthropic-compatible)
             "anthropic-version": "2023-06-01",
-            "anthropic-beta": ",".join(REQUIRED_BETAS),
-            "anthropic-dangerous-direct-browser-access": "true",
-            # Client identification - x-service-name seems critical!
-            "User-Agent": CLAUDE_CODE_USER_AGENT,
-            "x-app": "cli",
-            "x-service-name": "claude-code",
-            # Stainless SDK headers (platform-aware)
-            "x-stainless-arch": self._platform_info["arch"],
-            "x-stainless-lang": "js",
-            "x-stainless-os": self._platform_info["os"],
-            "x-stainless-package-version": "0.70.0",
-            "x-stainless-retry-count": "0",
-            "x-stainless-runtime": "node",
-            "x-stainless-runtime-version": self._platform_info["runtime_version"],
-            "x-stainless-helper-method": "stream",
-            "x-stainless-timeout": "600",
         }
 
         # Track metrics
@@ -229,8 +167,7 @@ class AnthropicOAuthModel(Model):
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream(
                 "POST",
-                f"{ANTHROPIC_API}{MESSAGES_ENDPOINT}",
-                params={"beta": "true"},
+                f"{self._base_url}{MESSAGES_ENDPOINT}",
                 json=payload,
                 headers=headers,
             ) as response:
@@ -480,37 +417,3 @@ class AnthropicOAuthModel(Model):
             "tool_use": "tool_use",
         }
         return mapping.get(anthropic_reason, "end_turn")
-
-    def _convert_system_prompt(self, system_prompt: str) -> list[dict[str, str]]:
-        """
-        Convert system prompt string to content blocks for OAuth compatibility.
-
-        The Claude Code OAuth validation checks only the FIRST content block,
-        so we split the prompt into:
-        1. First block: Exactly the Claude Code prefix
-        2. Second block: Everything else
-
-        This allows us to add custom instructions while passing OAuth validation.
-        """
-        # Check if prompt starts with the Claude Code prefix
-        if system_prompt.startswith(CLAUDE_CODE_SYSTEM_PREFIX):
-            # Extract the rest of the prompt after the prefix
-            rest = system_prompt[len(CLAUDE_CODE_SYSTEM_PREFIX):].strip()
-
-            if rest:
-                # Return two content blocks
-                return [
-                    {"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX},
-                    {"type": "text", "text": rest},
-                ]
-            else:
-                # Just the prefix, return single block
-                return [{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}]
-        else:
-            # No Claude Code prefix - this will likely fail OAuth validation
-            # but we send it anyway as a single block
-            logger.warning(
-                "System prompt doesn't start with Claude Code prefix. "
-                "OAuth validation may fail."
-            )
-            return [{"type": "text", "text": system_prompt}]

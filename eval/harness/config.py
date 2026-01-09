@@ -2,7 +2,7 @@
 Eval harness configuration.
 
 Loads settings from environment variables / .env file.
-Authentication is handled interactively via OAuth flow, not stored in config.
+Authentication uses z.ai API key (ZAI_API_KEY environment variable).
 """
 
 import logging
@@ -23,6 +23,10 @@ _dotenv_loaded = False
 @dataclass
 class Config:
     """Eval harness configuration."""
+
+    # z.ai API configuration
+    zai_api_key: str
+    zai_base_url: str
 
     # Tool API keys
     tavily_api_key: str
@@ -71,6 +75,17 @@ def load_config() -> Config:
 
     harness_dir = Path(__file__).parent
 
+    # Load and validate z.ai API key (required)
+    zai_api_key = os.getenv("ZAI_API_KEY", "")
+    if not zai_api_key:
+        raise ConfigError(
+            "ZAI_API_KEY not set. Get an API key from z.ai and set it in environment "
+            "or eval/harness/.env"
+        )
+
+    # z.ai base URL (optional, has default)
+    zai_base_url = os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/anthropic")
+
     # Load and validate Tavily API key
     tavily_api_key = os.getenv("TAVILY_API_KEY", "")
     if not tavily_api_key:
@@ -93,6 +108,10 @@ def load_config() -> Config:
         raise ConfigError(f"EVAL_RUNS_PER_CONDITION must be a positive integer: {e}")
 
     return Config(
+        # z.ai API
+        zai_api_key=zai_api_key,
+        zai_base_url=zai_base_url,
+
         # Tools
         tavily_api_key=tavily_api_key,
 
@@ -104,7 +123,7 @@ def load_config() -> Config:
         db_path=harness_dir / os.getenv("EVAL_DB_PATH", "eval_research.db"),
 
         # Eval
-        model_id=os.getenv("EVAL_MODEL_ID", "claude-sonnet-4-20250514"),
+        model_id=os.getenv("EVAL_MODEL_ID", "GLM-4.7"),
         runs_per_condition=runs_per_condition,
         results_dir=harness_dir / os.getenv("EVAL_RESULTS_DIR", "./results"),
         snapshots_dir=harness_dir / os.getenv("EVAL_SNAPSHOTS_DIR", "./snapshots"),
