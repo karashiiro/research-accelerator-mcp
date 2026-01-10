@@ -256,6 +256,194 @@ tasks:
     # Uses T4.1's warm_index_entries for related-warm condition
 
   # ===========================================
+  # Task Family 5: Rust Language Concepts
+  # ===========================================
+
+  T5.1:
+    family: RustLang
+    type: primary
+    prompt: "Find documentation and resources explaining Rust's ownership system - ownership, borrowing, and lifetimes."
+    ground_truth:
+      - paper: "Rust Book Ownership"
+        matchers:
+          - "doc.rust-lang.org.*ownership"
+          - "rust-lang.*book.*ownership"
+          - "ownership.*Rust"
+      - paper: "Rust Book Borrowing"
+        matchers:
+          - "doc.rust-lang.org.*borrowing"
+          - "doc.rust-lang.org.*references"
+          - "borrow.*checker"
+          - "references.*borrowing"
+      - paper: "Rust Book Lifetimes"
+        matchers:
+          - "doc.rust-lang.org.*lifetimes"
+          - "lifetime.*annotation"
+          - "'a.*lifetime"
+    success_threshold: 2
+    related_task: T5.2
+    warm_index_entries:
+      - description: "Rust Book - Understanding Ownership. Core concept in Rust: each value has a single owner, ownership can be transferred (moved), and values are dropped when owner goes out of scope."
+        resource: "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"
+      - description: "Rust Book - References and Borrowing. Explains how to use references (&T and &mut T) to borrow values without taking ownership. Covers borrowing rules and the borrow checker."
+        resource: "https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html"
+      - description: "Rust Book - Validating References with Lifetimes. Covers lifetime annotations, lifetime elision rules, and how the compiler ensures references are always valid."
+        resource: "https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html"
+      - description: "Rust Book - The Slice Type. Explains slices as references to contiguous sequences, including string slices (&str) and array slices (&[T])."
+        resource: "https://doc.rust-lang.org/book/ch04-03-slices.html"
+      - description: "Rustonomicon - Ownership and Lifetimes. Advanced guide to Rust's ownership system, covering unsafe code, variance, and subtyping."
+        resource: "https://doc.rust-lang.org/nomicon/ownership.html"
+
+  T5.2:
+    family: RustLang
+    type: related
+    primary_task: T5.1
+    prompt: "Find resources on Rust smart pointers - Box, Rc, Arc, RefCell and when to use each one."
+    ground_truth:
+      - paper: "Rust Book Smart Pointers"
+        matchers:
+          - "doc.rust-lang.org.*smart-pointers"
+          - "Box<T>"
+          - "Rc<T>"
+          - "Arc<T>"
+      - paper: "RefCell docs"
+        matchers:
+          - "RefCell"
+          - "interior mutability"
+          - "borrow.*runtime"
+      - paper: "Arc docs"
+        matchers:
+          - "Arc<T>"
+          - "atomic.*reference"
+          - "thread.*safe.*Rc"
+    success_threshold: 2
+
+  # ===========================================
+  # Task Family 6: TypeScript Type System
+  # ===========================================
+
+  T6.1:
+    family: TypeScript
+    type: primary
+    prompt: "Find documentation on TypeScript generics - how to write generic functions, classes, and constraints."
+    ground_truth:
+      - paper: "TypeScript Generics docs"
+        matchers:
+          - "typescriptlang.org.*generics"
+          - "Generic.*Types"
+          - "<T>.*generic"
+      - paper: "Generic Constraints"
+        matchers:
+          - "extends.*constraint"
+          - "generic.*constraint"
+          - "keyof"
+      - paper: "Utility Types"
+        matchers:
+          - "Partial<"
+          - "Required<"
+          - "Pick<"
+          - "Omit<"
+          - "utility.*types"
+    success_threshold: 2
+    related_task: T6.2
+    warm_index_entries:
+      - description: "TypeScript Handbook - Generics. Explains generic type parameters, generic functions, generic classes, and generic constraints using extends keyword."
+        resource: "https://www.typescriptlang.org/docs/handbook/2/generics.html"
+      - description: "TypeScript Handbook - Utility Types. Built-in generic types: Partial<T>, Required<T>, Readonly<T>, Pick<T,K>, Omit<T,K>, Record<K,T>, etc."
+        resource: "https://www.typescriptlang.org/docs/handbook/utility-types.html"
+      - description: "TypeScript Handbook - Keyof Type Operator. The keyof operator takes an object type and produces a string or numeric literal union of its keys."
+        resource: "https://www.typescriptlang.org/docs/handbook/2/keyof-types.html"
+      - description: "TypeScript Handbook - Conditional Types. Types that select one of two possible types based on a condition: T extends U ? X : Y"
+        resource: "https://www.typescriptlang.org/docs/handbook/2/conditional-types.html"
+      - description: "TypeScript Handbook - Mapped Types. Create new types by transforming properties of existing types using in keyof syntax."
+        resource: "https://www.typescriptlang.org/docs/handbook/2/mapped-types.html"
+
+  T6.2:
+    family: TypeScript
+    type: related
+    primary_task: T6.1
+    prompt: "Find resources on TypeScript type narrowing and type guards - how to narrow types in conditional blocks."
+    ground_truth:
+      - paper: "TypeScript Narrowing docs"
+        matchers:
+          - "typescriptlang.org.*narrowing"
+          - "type.*narrowing"
+          - "type.*guard"
+      - paper: "typeof guard"
+        matchers:
+          - "typeof.*narrowing"
+          - "typeof.*guard"
+          - "typeof x ==="
+      - paper: "instanceof or discriminated unions"
+        matchers:
+          - "instanceof"
+          - "discriminated.*union"
+          - "tagged.*union"
+          - "is.*type.*predicate"
+    success_threshold: 2
+
+  # ===========================================
+  # Task Family 7: Python Async
+  # ===========================================
+
+  T7.1:
+    family: PythonAsync
+    type: primary
+    prompt: "Find documentation on Python async/await - asyncio basics, coroutines, and running async code."
+    ground_truth:
+      - paper: "Python asyncio docs"
+        matchers:
+          - "docs.python.org.*asyncio"
+          - "asyncio.*coroutine"
+          - "async.*await.*Python"
+      - paper: "Coroutines"
+        matchers:
+          - "coroutine"
+          - "async def"
+          - "await.*expression"
+      - paper: "Event loop"
+        matchers:
+          - "event.*loop"
+          - "asyncio.run"
+          - "asyncio.get_event_loop"
+    success_threshold: 2
+    related_task: T7.2
+    warm_index_entries:
+      - description: "Python asyncio documentation - High-level APIs for async/await. Covers asyncio.run(), creating tasks, sleeping, running coroutines concurrently with gather()."
+        resource: "https://docs.python.org/3/library/asyncio.html"
+      - description: "Python asyncio - Coroutines and Tasks. Explains coroutines (async def), awaitables, creating tasks with create_task(), and task cancellation."
+        resource: "https://docs.python.org/3/library/asyncio-task.html"
+      - description: "Python asyncio - Event Loop. Low-level API for the event loop, running and stopping loops, scheduling callbacks."
+        resource: "https://docs.python.org/3/library/asyncio-eventloop.html"
+      - description: "Real Python - Async IO in Python. Comprehensive tutorial covering async/await syntax, asyncio module, and practical examples."
+        resource: "https://realpython.com/async-io-python/"
+      - description: "Python asyncio - Streams. High-level async/await-ready primitives for working with network connections (StreamReader, StreamWriter)."
+        resource: "https://docs.python.org/3/library/asyncio-stream.html"
+
+  T7.2:
+    family: PythonAsync
+    type: related
+    primary_task: T7.1
+    prompt: "Find resources on Python asyncio synchronization primitives - locks, semaphores, and queues for async code."
+    ground_truth:
+      - paper: "asyncio Lock"
+        matchers:
+          - "asyncio.Lock"
+          - "async.*lock"
+          - "asyncio.*synchronization"
+      - paper: "asyncio Semaphore"
+        matchers:
+          - "asyncio.Semaphore"
+          - "asyncio.BoundedSemaphore"
+          - "semaphore.*async"
+      - paper: "asyncio Queue"
+        matchers:
+          - "asyncio.Queue"
+          - "async.*queue"
+          - "producer.*consumer.*async"
+    success_threshold: 2
+
+  # ===========================================
   # Unrelated Control Task
   # ===========================================
 
