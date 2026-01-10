@@ -1,3 +1,5 @@
+**Note: I am considering this a failure for the time being as it does not reliably lead to token and time savings simultaneously. I think this turned out to be a micro-optimization at best with the right prompting, though I welcome others to try and improve this technique themselves.**
+
 # Research Index MCP Server
 
 A minimal MCP server for indexing and searching research resources.
